@@ -6,7 +6,8 @@
 \usage{
 profile(obj, pars, whichPar, alpha = 0.05, limits = c(lower = -Inf, upper =
   Inf), method = c("integrate", "optimize"), stepControl = NULL,
-  algoControl = NULL, optControl = NULL, verbose = FALSE, ...)
+  algoControl = NULL, optControl = NULL, verbose = FALSE, cores = 1,
+  ...)
 }
 \arguments{
 \item{obj}{Objective function \code{obj(pars, fixed, ...)} returning a list with "value",
@@ -14,7 +15,7 @@ profile(obj, pars, whichPar, alpha = 0.05, limits = c(lower = -Inf, upper =
 
 \item{pars}{Parameter vector corresponding to the log-liklihood optimum.}
 
-\item{whichPar}{Numeric or character. The parameter for which the profile is computed.}
+\item{whichPar}{Numeric or character vector. The parameters for which the profile is computed.}
 
 \item{alpha}{Numeric, the significance level based on the chisquare distribution with df=1}
 
@@ -35,6 +36,9 @@ setting stepControl, algoControl and optControl by hand.}
 See \link{trust} for more details.}
 
 \item{verbose}{Logical, print verbose messages.}
+
+\item{cores}{number of cores used by \code{mclapply()} when computing profiles for several
+parameters.}
 
 \item{...}{Arguments going to obj()}
 }
@@ -68,6 +72,8 @@ relative tolerance \code{rtol}, the stepsize may be increased. \code{max} and \c
 bounds for \code{stepsize}. \code{limit} is the maximum number of steps that are take for the profile computation.
 }
 \examples{
+\dontrun{
+
 ## Parameter transformation
 trafo <- eqnvec(a = "exp(loga)", 
                 b = "exp(logb)", 
@@ -88,7 +94,7 @@ myfit.fixed <- trust(obj, pars[-1], rinit = 1, rmax = 10, fixed = pars[1])
 profiles.approx <- do.call(
   rbind, 
   lapply(1:3, function(i) {
-    profile(obj, myfit$argument, whichPar = i, limits = c(-10, 10),
+    profile(obj, myfit$argument, whichPar = i, limits = c(-3, 3),
             method = "integrate")
   })
 )
@@ -97,7 +103,7 @@ profiles.approx <- do.call(
 profiles.exact <- do.call(
   rbind, 
   lapply(1:3, function(i) {
-    profile(obj, myfit$argument, whichPar = i, limits = c(-10, 10),
+    profile(obj, myfit$argument, whichPar = i, limits = c(-3, 3),
             method = "optimize")
   })
 )
@@ -106,7 +112,7 @@ profiles.exact <- do.call(
 profiles.approx.fixed <- do.call(
   rbind, 
   lapply(1:2, function(i) {
-    profile(obj, myfit.fixed$argument, whichPar = i, limits = c(-10, 10),
+    profile(obj, myfit.fixed$argument, whichPar = i, limits = c(-3, 3),
             method = "integrate",
             fixed = pars[1])
   })
@@ -120,5 +126,7 @@ plotProfile(list(profiles.approx, profiles.approx.fixed))
 plotPaths(profiles.approx, sort = TRUE)
 plotPaths(profiles.approx, whichPar = "logc")
 plotPaths(list(profiles.approx, profiles.approx.fixed), whichPar = "logc")
+
+}
 }
 

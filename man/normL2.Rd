@@ -13,9 +13,9 @@ normL2(data, x, errmodel = NULL, times = NULL, attr.name = "data")
 
 \item{errmodel}{object of class \link{obsfn}}
 
-\item{times}{numeric vector, the time points where the prediction function is to be
-evaluated. If NULL, time points are extacted from the datalist. If the prediction
-function makes use of events, \code{times} should be set by hand.}
+\item{times}{numeric vector, additional time points where the prediction function is 
+evaluated. If NULL, time points are extacted from the datalist solely. If the prediction
+function makes use of events, hand over event \code{times} here.}
 
 \item{attr.name}{character. The constraint value is additionally returned in an 
 attributed with this name}

@@ -13,10 +13,12 @@ Y(g, f = NULL, states = NULL, parameters = NULL, condition = NULL,
 
 \item{f}{Named character or equation vector or object that can be converted to eqnvec. Represents the underlying ODE.}
 
-\item{states}{character vector, alternative definition of "states", usually the names of \code{f}}
+\item{states}{character vector, alternative definition of "states", usually the names of \code{f}. If both,
+f and states are provided, the states argument overwrites the states derived from f.}
 
 \item{parameters}{character vector, alternative definition of the "parameters",
-usually the symbols contained in "g" and "f" except for \code{states} and the code word \code{time}.}
+usually the symbols contained in "g" and "f" except for \code{states} and the code word \code{time}. If both,
+f and parameters are provided, the parameters argument overwrites the parameters derived from f and g.}
 
 \item{condition}{either NULL (generic prediction for any condition) or a character, denoting
 the condition for which the function makes a prediction.}

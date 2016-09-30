@@ -5,7 +5,7 @@
 \title{Parameter transformation (implicit)}
 \usage{
 Pimpl(trafo, parameters = NULL, condition = NULL, keep.root = TRUE,
-  compile = FALSE, modelname = NULL, verbose = FALSE)
+  positive = TRUE, compile = FALSE, modelname = NULL, verbose = FALSE)
 }
 \arguments{
 \item{trafo}{Named character vector defining the equations to be set to zero. 
@@ -18,6 +18,9 @@ Names correspond to dependent variables.}
 \item{keep.root}{logical, applies for \code{method = "implicit"}. The root of the last
 evaluation of the parameter transformation function is saved as guess for the next 
 evaluation.}
+
+\item{positive}{logical, returns projection to the (semi)positive range. Comes with a warning if
+the steady state has been found to be negative.}
 
 \item{compile}{Logical, compile the function (see \link{funC0})}
 

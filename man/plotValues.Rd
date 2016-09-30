@@ -4,11 +4,13 @@
 \alias{plotValues}
 \title{Plotting objective values of a collection of fits}
 \usage{
-plotValues(x)
+plotValues(x, ...)
 }
 \arguments{
 \item{x}{data.frame with columns "value", "converged" and "iterations", e.g. 
 a \link{parframe}.}
+
+\item{...}{arguments for subsetting of x}
 }
 \description{
 Plotting objective values of a collection of fits

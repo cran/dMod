@@ -4,12 +4,12 @@
 \alias{plotPars}
 \title{Plot parameter values for a fitlist}
 \usage{
-plotPars(myparframe, whichFits = 1:nrow(myparframe))
+plotPars(x, ...)
 }
 \arguments{
-\item{myparframe}{parameter frame as obtained by as.parframe(mstrust)}
+\item{x}{parameter frame as obtained by as.parframe(mstrust)}
 
-\item{whichFits}{indexlist e.g. 1:10}
+\item{...}{arguments for subsetting of x}
 }
 \description{
 Plot parameter values for a fitlist

@@ -4,7 +4,7 @@ knitr::opts_chunk$set(echo = TRUE, fig.width = 10, fig.height = 8, warning = FAL
 ## ------------------------------------------------------------------------
 library(deSolve)
 library(dMod)
-set.seed(1)
+set.seed(2)
 
 ## ------------------------------------------------------------------------
 # Generate the ODE model
@@ -24,12 +24,12 @@ reactions$rates <- replaceSymbols(
 # Define parameters that are not estimated
 fixed.zero <- setdiff(reactions$states, "STAT") 
 # Generate odemodel
-model0 <- odemodel(reactions, modelname = "jak-stat", compile = TRUE, 
-                   fixed = fixed.zero, jacobian = "inz.lsodes")
+model0 <- odemodel(reactions,  fixed = fixed.zero, 
+                   modelname = "jak-stat", compile = TRUE)
 
 ## ---- fig.width = 6, fig.height = 4--------------------------------------
 # Generate a prediction function
-x <- Xs(model0, optionsSens = list(method = "lsodes"))
+x <- Xs(model0)
 
 # Make a prediction based on random parameter values
 parameters <- getParameters(x)
@@ -42,7 +42,7 @@ plot(prediction)
 ## ------------------------------------------------------------------------
 # Define observables like total STAT, total phosphorylated STAT, etc.
 observables <- eqnvec(
-  tSTAT = "s_tSTAT*(STAT + pSTAT + 2*pSTATdimer) + off_tSTAT",
+  tSTAT = "s_tSTAT*(STAT + pSTAT + 2*pSTATdimer)",
   tpSTAT = "s_tpSTAT*(pSTAT + 2*pSTATdimer) + off_tpSTAT",
   pEpoR = paste0("s_EpoR *", receptor)
 )
@@ -99,21 +99,21 @@ plot(data)
 obj <- normL2(data, g*x*p)
 
 ## ------------------------------------------------------------------------
-mu <- structure(rep(-1, length(parameters)), names = parameters)
-mu["multiple"] <- 0
+mu <- structure(rep(0, length(parameters) - 1), names = setdiff(parameters, "multiple"))
+fixed <- c(multiple = 2)
 constr <- constraintL2(mu = mu, sigma = 5)
 
 ## ---- fig.width = 6, fig.height = 2--------------------------------------
 
-myfit <- trust(obj + constr, mu, rinit = 1, rmax = 10)
+myfit <- trust(obj + constr, mu, rinit = 1, rmax = 10, fixed = fixed)
 times <- 0:60
-plot((g*x*p)(times, myfit$argument), data)
+plot((g*x*p)(times, myfit$argument, fixed = fixed), data)
 
 
 ## ---- fig.width = 5, fig.height = 4--------------------------------------
 
 set.seed(1)
-fitlist <- mstrust(obj + constr, center = mu, fits = 20, cores = 1, min = -1, max = 1, samplefun = "runif")
+fitlist <- mstrust(obj + constr, center = myfit$argument, fits = 20, cores = 1, sd = 1, samplefun = "rnorm", fixed = fixed, conditions = "Epo")
 pars <- as.parframe(fitlist)
 plotValues(subset(pars, converged))
 plotPars(subset(pars, converged))
@@ -122,12 +122,12 @@ plotPars(subset(pars, converged))
 ## ---- fig.width = 6, fig.height = 5--------------------------------------
 
 controls(g, NULL, "attach.input") <- TRUE
-plotArray(subset(pars, converged), g*x*p, 0:60, data, !grepl("prediction", name))
+plotArray(subset(pars, converged), g*x*p, 0:60, data, !grepl("prediction", name), fixed = fixed)
 
 
 ## ---- fig.width = 4, fig.height = 3--------------------------------------
 
-myprofile <- profile(obj + constr, pars = myfit$argument, whichPar = "s_EpoR")
+myprofile <- profile(obj + constr, pars = myfit$argument, whichPar = "s_EpoR", fixed = fixed)
 plotProfile(myprofile)
 
 
@@ -138,7 +138,7 @@ plotPaths(myprofile)
 
 ## ---- fig.width = 4, fig.height = 3--------------------------------------
 
-fixed <- c(p1 = 0, pEpoR = 0) # log values
+fixed <- c(p1 = 0, pEpoR = 0, multiple = 2) # log values
 pars <- mu[setdiff(names(mu), names(fixed))]
 myfit <- trust(obj + constr, pars, rinit = 1, rmax = 10, fixed = fixed)
 myprofile <- profile(obj + constr, pars = myfit$argument, whichPar = "s_EpoR", fixed = fixed)

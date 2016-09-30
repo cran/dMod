@@ -34,9 +34,9 @@ as.objlist <- function(p) {
 #' @param data object of class \link{datalist}
 #' @param x object of class \link{prdfn}
 #' @param errmodel object of class \link{obsfn}
-#' @param times numeric vector, the time points where the prediction function is to be
-#' evaluated. If NULL, time points are extacted from the datalist. If the prediction
-#' function makes use of events, \code{times} should be set by hand.
+#' @param times numeric vector, additional time points where the prediction function is 
+#' evaluated. If NULL, time points are extacted from the datalist solely. If the prediction
+#' function makes use of events, hand over event \code{times} here.
 #' @param attr.name character. The constraint value is additionally returned in an 
 #' attributed with this name
 #' @return Object of class \code{obsfn}, i.e. a function 
@@ -47,7 +47,8 @@ as.objlist <- function(p) {
 #' @export
 normL2 <- function(data, x, errmodel = NULL, times = NULL, attr.name = "data") {
 
-  if (is.null(times)) timesD <- sort(unique(c(0, do.call(c, lapply(data, function(d) d$time))))) else timesD <- times
+  timesD <- sort(unique(c(0, do.call(c, lapply(data, function(d) d$time)))))
+  if (!is.null(times)) timesD <- sort(union(times, timesD))
 
   data.conditions <- names(data)
   
@@ -60,10 +61,12 @@ normL2 <- function(data, x, errmodel = NULL, times = NULL, attr.name = "data") {
     arglist <- arglist[match.fnargs(arglist, "pars")]
     pouter <- arglist[[1]]
     
+    # Generate output template
+    pars_out <- colnames(getDerivs(as.parvec(pouter)))
     template <- objlist(
       value = 0,
-      gradient = structure(rep(0, length(pouter)), names = names(pouter)),
-      hessian = matrix(0, nrow = length(pouter), ncol = length(pouter), dimnames = list(names(pouter), names(pouter)))
+      gradient = structure(rep(0, length(pars_out)), names = pars_out),
+      hessian = matrix(0, nrow = length(pars_out), ncol = length(pars_out), dimnames = list(pars_out, pars_out))
     )
    
     # Import from controls
@@ -84,7 +87,7 @@ normL2 <- function(data, x, errmodel = NULL, times = NULL, attr.name = "data") {
       } else {
         mywrss <- wrss(res(data[[cn]], prediction[[cn]]))  
       }
-      available <- intersect(names(pouter), names(mywrss$gradient))
+      available <- intersect(pars_out, names(mywrss$gradient))
       result <- template
       result$value <- mywrss$value
       result$gradient[available] <- mywrss$gradient[available]
@@ -169,6 +172,7 @@ constraintL2 <- function(mu, sigma = 1, attr.name = "prior", condition = NULL) {
     if (!is.list(pouter)) pouter <- list(pouter)
     
     outlist <- lapply(pouter, function(p) {
+      
       
       ## Extract contribution of fixed pars and delete names for calculation of gr and hs  
       par.fixed <- intersect(names(mu), names(fixed))
@@ -277,6 +281,8 @@ datapointL2 <- function(name, time, value, sigma = 1, attr.name = "validation", 
     
     # Get predictions and derivatives at time point
     time.index <- which(prediction[[condition]][,"time"] == time)
+    if (length(time.index) == 0) 
+      stop("datapointL2() requests time point for which no prediction is available. Consider adding the time point by the times argument in normL2()")
     withDeriv <- !is.null(attr(prediction[[condition]], "deriv"))
     pred <- prediction[[condition]][time.index, ]
     deriv <- NULL

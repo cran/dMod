@@ -126,11 +126,13 @@ getReactions <- function(eqnlist) {
     
     numbers <- v[which(!is.na(v))]
     educts <- -numbers[numbers < 0]
-    educts[which(educts == 1)] <- " "
+    #educts[which(educts == 1)] <- " "
     products <- numbers[numbers > 0]
-    products[which(products == 1)] <- " "
-    educts <- paste(paste(educts, names(educts), paste = ""), collapse="+")
-    products <- paste(paste(products, names(products), paste = ""), collapse="+")
+    #products[which(products == 1)] <- 
+    educts <- paste(paste(educts, names(educts), sep = "*"), collapse=" + ")
+    products <- paste(paste(products, names(products), sep = "*"), collapse=" + ")
+    educts <- gsub("1*", "", educts, fixed = TRUE)
+    products <- gsub("1*", "", products, fixed = TRUE)
     
     reaction <- paste(educts, "->", products)
     return(c(educts, products))
@@ -234,10 +236,14 @@ addReaction <- function(eqnlist, from, to, rate, description = names(rate)) {
 #' Generate list of fluxes from equation list
 #' 
 #' @param eqnlist object of class \link{eqnlist}.
+#' @param type "conc." or "amount" for fluxes in units of concentrations or
+#' number of molecules. 
 #' @return list of named characters, the in- and out-fluxes for each state.
 #' @example inst/examples/equations.R
 #' @export
-getFluxes <- function(eqnlist) {
+getFluxes <- function(eqnlist, type = c("conc", "amount")) {
+  
+  type <- match.arg(type)
   
   description <- eqnlist$description
   rate <- eqnlist$rates
@@ -273,9 +279,16 @@ getFluxes <- function(eqnlist) {
         return(myvolume)
       })
     }
-    volumes.ratios <- paste0("*(", volumes.origin, "/", volumes.destin, ")")
-    #print(volumes.ratios)
-    volumes.ratios[volumes.destin == volumes.origin] <- ""
+    
+    switch(type,
+           conc = {
+             volumes.ratios <- paste0("*(", volumes.origin, "/", volumes.destin, ")")
+             volumes.ratios[volumes.destin == volumes.origin] <- ""
+           },
+           amount = {
+             volumes.ratios <- paste0("*(", volumes.origin, ")")
+           }
+    )
     
     numberchar <- as.character(v)
     if(nonZeros[1] %in% positives){
@@ -433,6 +446,7 @@ subset.eqnlist <- function(x, ...) {
   
   "%in%" <- function(x, table) sapply(table, function(mytable) any(x == mytable))
   select <- which(eval(substitute(...), data.list))
+  if (length(select) == 0) return(NULL)
   
   # Translate subsetting on eqnlist entries
   # smatrix
@@ -544,7 +558,7 @@ as.eqnvec.eqnlist <- function(x, ...) {
   
   eqnlist <- x
   
-  terme <- getFluxes(eqnlist)
+  terme <- getFluxes(eqnlist, ...)
   if(is.null(terme)) return()
   terme <- lapply(terme, function(t) paste(t, collapse=" "))
   
