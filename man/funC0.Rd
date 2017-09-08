@@ -16,8 +16,9 @@ named character vector with the algebraic expressions}
 
 \item{parameters}{character vector, the symbols that should be treated as parameters}
 
-\item{compile}{Logical. The function is either translated into a C file to be compiled or is
-evaluated in raw R.}
+\item{compile}{Logical. Directly compile the file. If \code{FALSE} and modelname is available,
+the C file is written but not compiled. If modelname is not available, an R function is
+generated and returned.}
 
 \item{modelname}{file name of the generated C file.}
 
@@ -42,6 +43,7 @@ The function \code{f} returns a matrix.
 Evaluation of algebraic expressions defined by characters
 }
 \examples{
+library(ggplot2)
 myfun <- funC0(c(y = "a*x^4 + b*x^2 + c"))
 out <- myfun(a = -1, b = 2, c = 3, x = seq(-2, 2, .1), attach.input = TRUE)
 qplot(x = x, y = y, data = as.data.frame(out), geom = "line")

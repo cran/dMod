@@ -4,11 +4,14 @@
 \alias{plotValues}
 \title{Plotting objective values of a collection of fits}
 \usage{
-plotValues(x, ...)
+plotValues(x, tol = 1, ...)
 }
 \arguments{
 \item{x}{data.frame with columns "value", "converged" and "iterations", e.g. 
 a \link{parframe}.}
+
+\item{tol}{maximal allowed difference between neighboring objective values
+to be recognized as one.}
 
 \item{...}{arguments for subsetting of x}
 }

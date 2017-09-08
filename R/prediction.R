@@ -25,6 +25,7 @@
 #' i.e. in this case the attibutes "deriv" and "sensitivities" do not coincide. 
 #' @example inst/examples/test_blocks.R
 #' @export
+#' @import deSolve
 Xs <- function(odemodel, forcings=NULL, events=NULL, names = NULL, condition = NULL, optionsOde=list(method = "lsoda"), optionsSens=list(method = "lsodes")) {
   
   func <- odemodel$func
@@ -80,6 +81,11 @@ Xs <- function(odemodel, forcings=NULL, events=NULL, names = NULL, condition = N
   # Only a subset of all variables/forcings is returned
   if (is.null(names)) names <- c(variables, forcnames)
   
+  # Update sensNames when names are set
+  select <- sensGrid[, 1] %in% names
+  sensNames <- paste(sensGrid[,1][select], sensGrid[,2][select], sep = ".")  
+  
+  
   # Controls to be modified from outside
   controls <- list(
     forcings = myforcings,
@@ -93,8 +99,8 @@ Xs <- function(odemodel, forcings=NULL, events=NULL, names = NULL, condition = N
   P2X <- function(times, pars, deriv=TRUE){
     
     
-    yini <- pars[variables]
-    mypars <- pars[parameters]
+    yini <- unclass(pars)[variables]
+    mypars <- unclass(pars)[parameters]
     
     events <- controls$events
     forcings <- controls$forcings
@@ -102,21 +108,23 @@ Xs <- function(odemodel, forcings=NULL, events=NULL, names = NULL, condition = N
     optionsOde <- controls$optionsOde
     optionsSens <- controls$optionsSens
     names <- controls$names
-    
-    # Update sensNames when names are set
-    select <- sensGrid[, 1] %in% names
-    sensNames <- paste(sensGrid[,1][select], sensGrid[,2][select], sep = ".")  
+    events.extended <- rbind(events, myevents.addon)
     
     # Add event time points (required by integrator) 
     event.times <- unique(events$time)
     times <- sort(union(event.times, times))
+    
+    # Sort event time points
+    if (!is.null(events)) events <- events[order(events$time),]
+    if (!is.null(events.extended)) events.extended <- events.extended[order(events.extended$time),]
+    
     
     myderivs <- NULL
     mysensitivities <- NULL
     if (!deriv) {
       
       # Evaluate model without sensitivities
-      loadDLL(func)
+      # loadDLL(func)
       if (!is.null(forcings)) forc <- setForcings(func, forcings) else forc <- NULL
       out <- do.call(odeC, c(list(y = unclass(yini), times = times, func = func, parms = mypars, forcings = forc, events = list(data = events)), optionsOde))
       out <- submatrix(out, cols = c("time", names))
@@ -126,11 +134,12 @@ Xs <- function(odemodel, forcings=NULL, events=NULL, names = NULL, condition = N
     } else {
       
       # Evaluate extended model
-      loadDLL(extended)
+      # loadDLL(extended)
       if (!is.null(forcings)) forc <- setForcings(extended, forcings) else forc <- NULL
+      
       outSens <- do.call(odeC, c(list(y = c(unclass(yini), yiniSens), times = times, func = extended, parms = mypars, 
                                       forcings = forc, 
-                                      events = list(data = rbind(events, myevents.addon))), optionsSens))
+                                      events = list(data = events.extended)), optionsSens))
       #out <- cbind(outSens[,c("time", variables)], out.inputs)
       out <- submatrix(outSens, cols = c("time", names))
       mysensitivities <- submatrix(outSens, cols = !colnames(outSens) %in% c(variables, forcnames))
@@ -142,13 +151,12 @@ Xs <- function(odemodel, forcings=NULL, events=NULL, names = NULL, condition = N
       dP <- attr(pars, "deriv")
       if (!is.null(dP)) {
         sensLong <- sensLong %*% submatrix(dP, rows = c(svariables, sparameters))
-        sensGrid <- expand.grid(variables, colnames(dP), stringsAsFactors = FALSE)
+        sensGrid <- expand.grid.alt(variables, colnames(dP))
         sensNames <- paste(sensGrid[,1], sensGrid[,2], sep = ".")
       }
-      outSens <- cbind(outSens[,1], matrix(sensLong, nrow = nrow(outSens)))
-      colnames(outSens) <- c("time", sensNames)
-      
-      myderivs <- outSens
+      myderivs <- matrix(0, nrow = nrow(outSens), ncol = 1 + length(sensNames), dimnames = list(NULL, c("time", sensNames)))
+      myderivs[, 1] <- out[, 1]
+      myderivs[, -1] <- sensLong
       
     }
     
@@ -161,6 +169,7 @@ Xs <- function(odemodel, forcings=NULL, events=NULL, names = NULL, condition = N
   attr(P2X, "equations") <- as.eqnvec(attr(func, "equations"))
   attr(P2X, "forcings") <- forcings
   attr(P2X, "events") <- events
+  attr(P2X, "modelname") <- func[1]
   
   
   prdfn(P2X, c(variables, parameters), condition) 
@@ -219,7 +228,7 @@ Xf <- function(odemodel, forcings = NULL, events = NULL, condition = NULL, optio
     pars <- P[parameters]
     #alltimes <- unique(sort(c(times, forctimes)))
     
-    loadDLL(func)
+    # loadDLL(func)
     if(!is.null(forcings)) forc <- setForcings(func, forcings) else forc <- NULL
     out <- do.call(odeC, c(list(y=yini, times=times, func=func, parms=pars, forcings=forc,events = list(data = events)), optionsOde))
     #out <- cbind(out, out.inputs)      
@@ -232,6 +241,7 @@ Xf <- function(odemodel, forcings = NULL, events = NULL, condition = NULL, optio
   attr(P2X, "equations") <- as.eqnvec(attr(func, "equations"))
   attr(P2X, "forcings") <- forcings
   attr(P2X, "events") <- events
+  attr(P2X, "modelname") <- func[1]
   
   
   prdfn(P2X, c(variables, parameters), condition) 
@@ -344,7 +354,7 @@ Xd <- function(data, condition = NULL) {
       dP <- attr(pars, "deriv")
       if (!is.null(dP)) {
         sensLong <- sensLong %*% submatrix(dP, rows = parameters)
-        sensGrid <- expand.grid(states, colnames(dP), stringsAsFactors = FALSE)
+        sensGrid <- expand.grid.alt(states, colnames(dP))
         sensNames <- paste(sensGrid[,1], sensGrid[,2], sep = ".")
       }
       outSens <- cbind(times, matrix(sensLong, nrow = dim(outSens)[1]))
@@ -374,7 +384,8 @@ Xd <- function(data, condition = NULL) {
 #' and its derivatives based on the output of a model prediction function, see \link{prdfn}, 
 #' as e.g. produced by \link{Xs}.
 #' @param g Named character vector or equation vector defining the observation function
-#' @param f Named character or equation vector or object that can be converted to eqnvec. Represents the underlying ODE.
+#' @param f Named character of equations or object that can be converted to eqnvec or object of class fn.
+#' If f is provided, states and parameters are guessed from f.
 #' @param states character vector, alternative definition of "states", usually the names of \code{f}. If both,
 #' f and states are provided, the states argument overwrites the states derived from f.
 #' @param parameters character vector, alternative definition of the "parameters",
@@ -402,7 +413,14 @@ Xd <- function(data, condition = NULL) {
 #' @example inst/examples/prediction.R
 #' @export
 Y <- function(g, f = NULL, states = NULL, parameters = NULL, condition = NULL, attach.input = TRUE, compile = FALSE, modelname = NULL, verbose = FALSE) {
+ 
   
+  # Idea: 
+  # If replicate scaling is undispensible and different 
+  # observable names for different replicates is not an option, then
+  # g could be a list of observables. For this case, the observation
+  # function has to return a list of observations for each condition.
+  # Not yet clear how this works with the "+" operator.
   myattach.input <- attach.input
   
   warnings <- FALSE
@@ -411,6 +429,10 @@ Y <- function(g, f = NULL, states = NULL, parameters = NULL, condition = NULL, a
   if (is.null(f) && is.null(states) && is.null(parameters)) 
     stop("Not all three arguments f, states and parameters can be NULL")
   
+  # Modify modelname by condition
+  if (!is.null(modelname) && !is.null(condition)) modelname <- paste(modelname, sanitizeConditions(condition), sep = "_")
+  
+  # Then add suffix(es) for derivative function
   if (!is.null(modelname)) modelname_deriv <- paste(modelname, "deriv", sep = "_")
   
   # Get potential paramters from g, forcings are treated as parameters because
@@ -418,6 +440,9 @@ Y <- function(g, f = NULL, states = NULL, parameters = NULL, condition = NULL, a
   if (is.null(f)) {
     states <- union(states, "time")
     parameters <- parameters
+  } else if (inherits(f, "fn")) {
+    states <- union(names(attr(attr(f, "mappings")[[1]], "equations")), "time")
+    parameters <- setdiff(union(getParameters(f), getSymbols(unclass(g))), states)
   } else {
     f <- as.eqnvec(f)
     if (is.null(states)) states <- union(names(f), "time")
@@ -470,27 +495,11 @@ Y <- function(g, f = NULL, states = NULL, parameters = NULL, condition = NULL, a
     attach.input <- controls$attach.input
     
     # Prepare list for with()
-    nOut <- dim(out)[2]
-    #outlist <- lapply(1:nOut, function(i) out[,i]); names(outlist) <- colnames(out)
-    
-    dout <- attr(out, "sensitivities")
-    
-    
-    # if (!is.null(dout)) {
-    #   nDeriv <- dim(dout)[2]
-    #   derivlist <- lapply(1:nDeriv, function(i) dout[,i]); names(derivlist) <- colnames(dout)  
-    # } else {
-    #   derivlist <- NULL
-    # }
-    
-    
-    #x <- c(outlist, derivlist, as.list(pars), as.list(zeros))
-    #values <- gEval(x)
-    
-    
+    nOut <- ncol(out)
     values <- gEval(M = out, p = pars)
     
     sensitivities.export <- NULL
+    dout <- attr(out, "sensitivities")
     if (!is.null(dout)) {
       dvalues <- derivsEval(M = cbind(out, dout), p = pars)
       sensitivities.export <- cbind(time = out[, 1], dvalues)
@@ -507,23 +516,16 @@ Y <- function(g, f = NULL, states = NULL, parameters = NULL, condition = NULL, a
       if (length(parameters.missing) > 0 & warnings)
         warning("Parameters ", paste(parameters.missing, collapse = ", ", "are missing in the Jacobian of the parameter transformation. Zeros are introduced."))
       
-      dP.missing <- matrix(0, nrow = length(parameters.missing), ncol = dim(dP)[2], 
-                           dimnames = list(parameters.missing, colnames(dP)))
-      dP <- rbind(dP, dP.missing)
-      
+      dP.full <- matrix(0, nrow = length(parameters.all), ncol = ncol(dP), dimnames = list(parameters.all, colnames(dP)))
+      dP.full[intersect(rownames(dP), parameters.all),] <- dP[intersect(rownames(dP), parameters.all),]
+
       # Multiplication with tangent map
-      
-      
-      sensLong <- matrix(dvalues, nrow = dim(out)[1]*length(observables))
-      
-      sensLong <- sensLong %*% submatrix(dP, rows = parameters.all)
-      
-      
-      
+      sensLong <- matrix(dvalues, nrow = nrow(out)*length(observables))
+      sensLong <- sensLong %*% dP.full
       dvalues <- matrix(sensLong, nrow = dim(out)[1])
       
       # Naming
-      sensGrid <- expand.grid.alt(observables, colnames(dP))
+      sensGrid <- expand.grid.alt(observables, colnames(dP.full))
       sensNames <- paste(sensGrid[,1], sensGrid[,2], sep = ".")
       colnames(dvalues) <- sensNames
       
@@ -558,6 +560,7 @@ Y <- function(g, f = NULL, states = NULL, parameters = NULL, condition = NULL, a
   attr(X2Y, "equations") <- g
   attr(X2Y, "parameters") <- parameters
   attr(X2Y, "states") <- states
+  attr(X2Y, "modelname") <- modelname
   
   obsfn(X2Y, parameters, condition)
   

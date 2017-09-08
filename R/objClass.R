@@ -25,6 +25,73 @@ as.objlist <- function(p) {
 }
 
 
+#' Compute a differentiable box prior
+#' 
+#' @param p Named numeric, the parameter value
+#' @param mu Named numeric, the prior values, means of boxes
+#' @param sigma Named numeric, half box width
+#' @param k Named numeric, shape of box; if 0 a quadratic prior is obtained, the higher k the more box shape, gradient at border of the box (-sigma, sigma) is equal to sigma*k
+#' @param fixed Named numeric with fixed parameter values (contribute to the prior value but not to gradient and Hessian)
+#' @return list with entries: value (numeric, the weighted residual sum of squares), 
+#' gradient (numeric, gradient) and 
+#' hessian (matrix of type numeric). Object of class \code{objlist}.
+constraintExp2 <- function(p, mu, sigma = 1, k = 0.05, fixed=NULL) {
+  
+  
+  ##
+  ## This function need to be extended according to constraintL2()
+  ## The parameters sigma and k need to be replaced by more
+  ## meaningful parameters.
+  ##
+  
+  kmin <- 1e-5
+  
+  ## Augment sigma if length = 1
+  if(length(sigma) == 1) 
+    sigma <- structure(rep(sigma, length(mu)), names = names(mu)) 
+  ## Augment k if length = 1
+  if(length(k) == 1) 
+    k <- structure(rep(k, length(mu)), names = names(mu))
+  
+  k <- sapply(k, function(ki){
+    if(ki < kmin){
+      kmin
+    } else ki
+  })
+  
+  
+  ## Extract contribution of fixed pars and delete names for calculation of gr and hs  
+  par.fixed <- intersect(names(mu), names(fixed))
+  sumOfFixed <- 0
+  if(!is.null(par.fixed)) sumOfFixed <- sum(0.5*(exp(k[par.fixed]*((fixed[par.fixed] - mu[par.fixed])/sigma[par.fixed])^2)-1)/(exp(k[par.fixed])-1))
+  
+  
+  par <- intersect(names(mu), names(p))
+  t <- p[par]
+  mu <- mu[par]
+  s <- sigma[par]
+  k <- k[par]
+  
+  # Compute prior value and derivatives 
+  
+  gr <- rep(0, length(t)); names(gr) <- names(t)
+  hs <- matrix(0, length(t), length(t), dimnames = list(names(t), names(t)))
+  
+  val <- sum(0.5*(exp(k*((t-mu)/s)^2)-1)/(exp(k)-1)) + sumOfFixed
+  gr <- (k*(t-mu)/(s^2)*exp(k*((t-mu)/s)^2)/(exp(k)-1))
+  diag(hs)[par] <- k/(s*s)*exp(k*((t-mu)/s)^2)/(exp(k)-1)*(1+2*k*(t-mu)/(s^2))
+  
+  dP <- attr(p, "deriv")
+  if(!is.null(dP)) {
+    gr <- as.vector(gr%*%dP); names(gr) <- colnames(dP)
+    hs <- t(dP)%*%hs%*%dP; colnames(hs) <- colnames(dP); rownames(hs) <- colnames(dP)
+  }
+  
+  objlist(value=val,gradient=gr,hessian=hs)
+  
+}
+
+
 #' L2 norm between data and model prediction
 #' 
 #' @description For parameter estimation and optimization, an objective function
@@ -50,12 +117,17 @@ normL2 <- function(data, x, errmodel = NULL, times = NULL, attr.name = "data") {
   timesD <- sort(unique(c(0, do.call(c, lapply(data, function(d) d$time)))))
   if (!is.null(times)) timesD <- sort(union(times, timesD))
 
+  x.conditions <- names(attr(x, "mappings"))
   data.conditions <- names(data)
+  if (!all(data.conditions %in% x.conditions)) 
+    stop("The prediction function does not provide predictions for all conditions in the data.")
   
-  controls <- list(times = timesD, attr.name = attr.name)
+  controls <- list(times = timesD, attr.name = attr.name, conditions = x.conditions)
+
+  # might be necessary to "store" errmodel in the objective function (-> runbg)
+  force(errmodel)  
   
-  
-  myfn <- function(..., fixed = NULL, deriv=TRUE, conditions = data.conditions, env = NULL) {
+  myfn <- function(..., fixed = NULL, deriv=TRUE, conditions = controls$conditions, env = NULL) {
     
     arglist <- list(...)
     arglist <- arglist[match.fnargs(arglist, "pars")]
@@ -90,8 +162,13 @@ normL2 <- function(data, x, errmodel = NULL, times = NULL, attr.name = "data") {
       available <- intersect(pars_out, names(mywrss$gradient))
       result <- template
       result$value <- mywrss$value
-      result$gradient[available] <- mywrss$gradient[available]
-      result$hessian[available, available] <- mywrss$hessian[available, available]
+      if (deriv) {
+        result$gradient[available] <- mywrss$gradient[available]
+        result$hessian[available, available] <- mywrss$hessian[available, available]  
+      } else {
+        result$gradient <- result$hessian <- NULL
+      }
+      
       return(result)
     })
     out.data <- Reduce("+", out.data)
@@ -112,6 +189,7 @@ normL2 <- function(data, x, errmodel = NULL, times = NULL, attr.name = "data") {
   class(myfn) <- c("objfn", "fn")
   attr(myfn, "conditions") <- data.conditions
   attr(myfn, "parameters") <- attr(x, "parameters")
+  attr(myfn, "modelname") <- modelname(x, errmodel)
   return(myfn)
 
 }
@@ -120,32 +198,69 @@ normL2 <- function(data, x, errmodel = NULL, times = NULL, attr.name = "data") {
 #' Soft L2 constraint on parameters
 #' 
 #' @param mu named numeric, the prior values
-#' @param sigma named numeric of length of mu or numeric of length one.
+#' @param sigma named numeric of length of mu or numeric of length one
+#' or character of length of mu or character of length one
 #' @param attr.name character. The constraint value is additionally returned in an 
 #' attributed with this name
 #' @param condition character, the condition for which the constraint should apply. If
 #' \code{NULL}, applies to any condition.
 #' @return object of class \code{objfn}
 #' @seealso \link{wrss}
-#' @details Computes the constraint value 
+#' @details If sigma is numeric, the function computes the constraint value 
 #' \deqn{\left(\frac{p-\mu}{\sigma}\right)^2}{(p-mu)^2/sigma^2}
-#' and its derivatives with respect to p.
+#' and its derivatives with respect to p. If sigma is a character, the 
+#' function computes
+#' \deqn{\left(\frac{p-\mu}{\sigma}\right)^2 + \log(\sigma^2)}{(p-mu)^2/sigma^2 + log(sigma^2)}
+#' and its derivatives with respect to p and sigma. Sigma parameters being
+#' passed to the function are ALWAYS assumed to be on a log scale, i.e. internally
+#' sigma parameters are converted by \code{exp()}.
 #' @examples
 #' mu <- c(A = 0, B = 0)
 #' sigma <- c(A = 0.1, B = 1)
 #' myfn <- constraintL2(mu, sigma)
 #' myfn(pars = c(A = 1, B = -1))
+#' 
+#' # Introduce sigma parameter but fix them (sigma parameters
+#' # are assumed to be passed on log scale)
+#' mu <- c(A = 0, B = 0)
+#' sigma <- paste("sigma", names(mu), sep = "_")
+#' myfn <- constraintL2(mu, sigma)
+#' pars <- c(A = .8, B = -.3, sigma_A = -1, sigma_B = 1)
+#' myfn(pars = pars[c(1, 3)], fixed = pars[c(2, 4)])
+#' 
+#' # Assume same sigma parameter for both A and B
+#' # sigma is assumed to be passed on log scale
+#' mu <- c(A = 0, B = 0)
+#' myfn <- constraintL2(mu, sigma = "sigma")
+#' pars <- c(A = .8, B = -.3, sigma = 0)
+#' myfn(pars = pars)
+#' 
 #' @export
 constraintL2 <- function(mu, sigma = 1, attr.name = "prior", condition = NULL) {
 
+  
+  # Aktuell zu kompliziert aufgesetzt. Man sollte immer die komplette Hessematrix/Gradient
+  # auswerten und dann die Elemente streichen, die in fixed sind!
+  
+  
+  estimateSigma <- ifelse(is.character(sigma), TRUE, FALSE)
+  if (length(sigma) > 1 & length(sigma) < length(mu))
+    stop("sigma must either have length 1 or at least length equal to length of mu.")
+  
   ## Augment sigma if length = 1
   if (length(sigma) == 1) 
     sigma <- structure(rep(sigma, length(mu)), names = names(mu))
+  if (is.null(names(sigma)))
+    names(sigma) <- names(mu)
+  if (!is.null(names(sigma)) & !all(names(mu) %in% names(sigma)))
+    stop("Names of sigma and names of mu do not match.")
   
+  ## Bring sigma in correct order (no matter if character or numeric)
+  sigma <- sigma[names(mu)]
   
   controls <- list(mu = mu, sigma = sigma, attr.name = attr.name)
   
-  myfn <- function(..., fixed = NULL, deriv=TRUE, conditions = condition, env = NULL) {
+  myfn <- function(..., fixed = NULL, deriv = TRUE, conditions = condition, env = NULL) {
     
     arglist <- list(...)
     arglist <- arglist[match.fnargs(arglist, "pars")]
@@ -155,13 +270,13 @@ constraintL2 <- function(mu, sigma = 1, attr.name = "prior", condition = NULL) {
     mu <- controls$mu
     sigma <- controls$sigma
     attr.name <- controls$attr.name
+    nmu <- length(mu)
     
     # pouter can be a list (if result from a parameter transformation)
     # In this case match with conditions and evaluate only those
     # If there is no overlap, return NULL
     # If pouter is not a list, evaluate the constraint function 
     # for this pouter.
-    
     if (is.list(pouter) && !is.null(conditions)) {
       available <- intersect(names(pouter), conditions)
       defined <- ifelse(is.null(condition), TRUE, condition %in% conditions)
@@ -171,31 +286,67 @@ constraintL2 <- function(mu, sigma = 1, attr.name = "prior", condition = NULL) {
     }
     if (!is.list(pouter)) pouter <- list(pouter)
     
+    
     outlist <- lapply(pouter, function(p) {
       
       
-      ## Extract contribution of fixed pars and delete names for calculation of gr and hs  
-      par.fixed <- intersect(names(mu), names(fixed))
-      sumOfFixed <- 0
-      if (!is.null(par.fixed)) sumOfFixed <- sum(0.5*((fixed[par.fixed] - mu[par.fixed])/sigma[par.fixed]) ^ 2)
+      pars <- c(p, fixed)[names(mu)]
+      p1 <- setdiff(intersect(names(mu), names(p)), names(fixed))
       
-      # Compute prior value and derivatives
-      par <- intersect(names(mu), names(p))
-      
-      val <- sum((0.5*((p[par] - mu[par])/sigma[par]) ^ 2)) + sumOfFixed
-      gr <- rep(0, length(p)); names(gr) <- names(p)
-      gr[par] <- ((p[par] - mu[par])/(sigma[par] ^ 2))
-      
-      hs <- matrix(0, length(p), length(p), dimnames = list(names(p), names(p)))
-      diag(hs)[par] <- 1/sigma[par] ^ 2
-      
-      dP <- attr(p, "deriv")
-      if (!is.null(dP)) {
-        gr <- as.vector(gr %*% dP); names(gr) <- colnames(dP)
-        hs <- t(dP) %*% hs %*% dP; colnames(hs) <- colnames(dP); rownames(hs) <- colnames(dP)
+      # if estimate sigma, produce numeric sigma vector from the parameters provided in p and fixed
+      if (estimateSigma) {
+        sigmapars <- sigma
+        sigma <- exp(c(p, fixed)[sigma])
+        names(sigma) <- names(mu)
+        Jsigma <- do.call(cbind, lapply(unique(sigmapars), function(s) {
+          (sigmapars == s)*sigma
+        }))
+        colnames(Jsigma) <- unique(sigmapars)
+        rownames(Jsigma) <- names(sigma)
+        p2 <- setdiff(intersect(unique(sigmapars), names(p)), names(fixed))
       }
       
-      objlist(value = 2*val, gradient = 2*gr, hessian = 2*hs)
+      # Compute constraint value and derivatives
+      val <- sum((pars - mu)^2/sigma^2) + estimateSigma * sum(log(sigma^2))
+      val.p <- 2*(pars - mu)/sigma^2
+      val.sigma <- -2*(pars-mu)^2/sigma^3 + 2/sigma
+      val.p.p <- diag(2/sigma^2, nmu, nmu); colnames(val.p.p) <- rownames(val.p.p) <- names(mu)
+      val.p.sigma <- diag(-4*(pars-mu)/sigma^3, nmu, nmu); colnames(val.p.sigma) <- rownames(val.p.sigma) <- names(mu)
+      val.sigma.sigma <- diag(6*(pars-mu)^2/sigma^4 - 2/sigma^2, nmu, nmu); colnames(val.sigma.sigma) <- rownames(val.sigma.sigma) <- names(mu)
+      
+      # Multiply with Jacobian of sigma vector if estimate sigma
+      if (estimateSigma) {
+        val.sigma <- (val.sigma %*% Jsigma)[1,]
+        val.p.sigma <- (val.p.sigma %*% Jsigma)
+        val.sigma.sigma <- t(Jsigma) %*% val.sigma.sigma %*% Jsigma
+      }
+      
+      
+      gr <- hs <- NULL
+      if (deriv) {
+        # Produce output gradient and hessian
+        gr <- rep(0, length(p)); names(gr) <- names(p)
+        hs <- matrix(0, length(p), length(p), dimnames = list(names(p), names(p)))
+        
+        # Set values in gradient and hessian
+        gr[p1] <- val.p[p1]
+        hs[p1, p1] <- val.p.p[p1, p1]
+        if (estimateSigma) {
+          gr[p2] <- val.sigma[p2]
+          hs[p1, p2] <- val.p.sigma[p1, p2]
+          hs[p2, p1] <- t(val.p.sigma)[p2, p1]
+          hs[p2, p2] <- val.sigma.sigma[p2, p2]
+        }
+        
+        # Multiply with derivatives of incoming parameter
+        dP <- attr(p, "deriv")
+        if (!is.null(dP)) {
+          gr <- as.vector(gr %*% dP); names(gr) <- colnames(dP)
+          hs <- t(dP) %*% hs %*% dP; colnames(hs) <- colnames(dP); rownames(hs) <- colnames(dP)
+        }
+      }
+
+      objlist(value = val, gradient = gr, hessian = hs)
       
       
     })
@@ -272,7 +423,12 @@ datapointL2 <- function(name, time, value, sigma = 1, attr.name = "validation", 
     }
   
     # Return result only when the data point condition overlaps with the evaluated conditions
-    if (!is.null(conditions) && !condition %in% conditions) return()
+    if (!is.null(conditions) && !condition %in% conditions) 
+      return()
+    if (is.null(conditions) && !condition %in% names(prediction))
+      stop("datapointL2 requests unavailable condition. Call the objective function explicitly stating the conditions argument.")
+    
+    
     
     # Divide parameter into data point and rest
     datapar <- setdiff(names(mu), names(fixed))
@@ -282,7 +438,7 @@ datapointL2 <- function(name, time, value, sigma = 1, attr.name = "validation", 
     # Get predictions and derivatives at time point
     time.index <- which(prediction[[condition]][,"time"] == time)
     if (length(time.index) == 0) 
-      stop("datapointL2() requests time point for which no prediction is available. Consider adding the time point by the times argument in normL2()")
+      stop("datapointL2() requests time point for which no prediction is available. Please add missing time point by the times argument in normL2()")
     withDeriv <- !is.null(attr(prediction[[condition]], "deriv"))
     pred <- prediction[[condition]][time.index, ]
     deriv <- NULL
@@ -312,6 +468,7 @@ datapointL2 <- function(name, time, value, sigma = 1, attr.name = "validation", 
     
     out <- objlist(value = val, gradient = gr, hessian = hs)
     attr(out, controls$attr.name) <- out$value
+    attr(out, "prediction") <- pred
     
     attr(out, "env") <- env
     
@@ -397,24 +554,28 @@ priorL2 <- function(mu, lambda = "lambda", attr.name = "prior", condition = NULL
       par0 <- setdiff(par, lambda)
       
       val <- sum(exp(c(fixed, p)[lambda]) * (p[par] - mu[par]) ^ 2) + sumOfFixed
-      gr <- rep(0, length(p)); names(gr) <- names(p)
-      gr[par] <- 2*exp(c(fixed, p)[lambda])*(p[par] - mu[par])
-      if (lambda %in% names(p)) {
-        gr[lambda] <- sum(exp(c(fixed, p)[lambda]) * (p[par0] - mu[par0]) ^ 2) + 
-          sum(exp(c(fixed, p)[lambda]) * (fixed[par.fixed] - mu[par.fixed]) ^ 2)
-      }
       
-      hs <- matrix(0, length(p), length(p), dimnames = list(names(p), names(p)))
-      diag(hs)[par] <- 2*exp(c(fixed, p)[lambda])
-      if (lambda %in% names(p)) {
-        hs[lambda, lambda] <- gr[lambda] 
-        hs[lambda, par0] <- hs[par0, lambda] <- gr[par0]
-      }
-      
-      dP <- attr(p, "deriv")
-      if (!is.null(dP)) {
-        gr <- as.vector(gr %*% dP); names(gr) <- colnames(dP)
-        hs <- t(dP) %*% hs %*% dP; colnames(hs) <- colnames(dP); rownames(hs) <- colnames(dP)
+      gr <- hs <- NULL
+      if (deriv) {
+        gr <- rep(0, length(p)); names(gr) <- names(p)
+        gr[par] <- 2*exp(c(fixed, p)[lambda])*(p[par] - mu[par])
+        if (lambda %in% names(p)) {
+          gr[lambda] <- sum(exp(c(fixed, p)[lambda]) * (p[par0] - mu[par0]) ^ 2) + 
+            sum(exp(c(fixed, p)[lambda]) * (fixed[par.fixed] - mu[par.fixed]) ^ 2)
+        }
+        
+        hs <- matrix(0, length(p), length(p), dimnames = list(names(p), names(p)))
+        diag(hs)[par] <- 2*exp(c(fixed, p)[lambda])
+        if (lambda %in% names(p)) {
+          hs[lambda, lambda] <- gr[lambda] 
+          hs[lambda, par0] <- hs[par0, lambda] <- gr[par0]
+        }
+        
+        dP <- attr(p, "deriv")
+        if (!is.null(dP)) {
+          gr <- as.vector(gr %*% dP); names(gr) <- colnames(dP)
+          hs <- t(dP) %*% hs %*% dP; colnames(hs) <- colnames(dP); rownames(hs) <- colnames(dP)
+        }
       }
       
       objlist(value = val, gradient = gr, hessian = hs)
@@ -571,7 +732,6 @@ nll <- function(nout) {
   
   return(out12)
 }
-
 
 #' @export
 print.objfn <- function(x, ...) {

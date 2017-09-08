@@ -75,13 +75,15 @@ theme_dMod <- function(base_size = 11, base_family = "") {
   black <- colors$dark["black"]
   
   theme_bw(base_size = base_size, base_family = base_family) + 
-    theme(line = element_line(colour = gray), 
+    theme(line = element_line(colour = black), 
           rect = element_rect(fill = "white", colour = NA), 
           text = element_text(colour = black), 
-          axis.ticks = element_line(colour = gray), 
+          axis.ticks = element_line(colour = black), 
+          axis.text = element_text(color = black),
           legend.key = element_rect(colour = NA), 
-          panel.border = element_rect(colour = gray), 
-          panel.grid = element_line(colour = gray, size = 0.2), 
+          panel.border = element_rect(colour = black), 
+          panel.grid = element_line(colour = black, size = 0.2), 
+          #panel.grid = element_blank(), 
           strip.background = element_rect(fill = "white", colour = NA)) 
 }
 
@@ -92,6 +94,7 @@ dMod_colors <- c("#000000", "#C5000B", "#0084D1", "#579D1C", "#FF950E", "#4B1F6F
 #' @param ... arguments goint to code{scale_color_manual()}
 #' @export
 #' @examples
+#' library(ggplot2)
 #' times <- seq(0, 2*pi, 0.1)
 #' values <- sin(times)
 #' data <- data.frame(
@@ -464,109 +467,6 @@ plotPaths <- function(profs, ..., whichPar = NULL, sort = FALSE, relative = TRUE
 
 
 
-
-
-
-
-#' Plot an array of model predictions for a list of parameters
-#' 
-#' @param parframe Object of class \code{parframe}, e.g. returned by \link{mstrust} or \link{profile}
-#' @param x The model prediction function \code{x(times, pars, fixed, ...)}
-#' @param times Numeric vector of time points for the model prediction
-#' @param data Named list of data.frames as being used in \link{res}, i.e. with columns \code{name}, \code{time}, 
-#' \code{value} and \code{sigma}.
-#' @param ... Further arguments going to \code{subset}.
-#' @param fixed Named numeric vector with fixed parameters
-#' @param deriv Logical. If \code{x} supports the argument \code{deriv}, it is used.
-#' @param scales The scales argument of \code{facet_wrap} or \code{facet_grid}, i.e. \code{"free"}, \code{"fixed"}, 
-#' \code{"free_x"} or \code{"free_y"}
-#' @param facet Either \code{"wrap"} or \code{"grid"}
-#' @details The data.frame being plotted has columns \code{time}, \code{value}, \code{sigma},
-#' \code{name} and \code{condition}.
-#'  
-#' 
-#' @return A plot object of class \code{ggplot}.
-#' @example inst/examples/parlist.R
-#' @export
-plotArray <- function(parframe, x, times, data = NULL, ..., 
-                      fixed = NULL, deriv = FALSE, scales = "free", facet = "wrap") {
-
-  # Get attributes and go back to data.frame
-  parameters <- attr(parframe, "parameters")
-  parframe <- as.data.frame(parframe)
-  
-  pars <- lapply(1:nrow(parframe), function(i) unlist(parframe[i, c("value", parameters)]))
-  
-  
-  prediction <- lapply(pars, function(p) {
-    pred_out <- suppressWarnings(try({
-      pred <- x(times, p, fixed = fixed, deriv = deriv)
-      newnames <- sapply(1:length(pred), function(cond) paste(colnames(pred[[cond]])[-1], names(pred)[cond], sep = ",\n "))
-      pred <- do.call(cbind, pred)
-      pred <- pred[, -which(colnames(pred) == "time")]
-      pred <- cbind(times, pred)
-      colnames(pred) <- c("time", newnames)
-      return(pred)
-    }, silent = TRUE))
-    if (!inherits(pred_out, "try-error")) return(pred_out)
-  })
-  available <- !unlist(lapply(prediction, is.null))
-  prediction <- prediction[available]
-  names(prediction) <- parframe[available ,"value"]
-  
-  
-  if (!is.null(data)) {
-    for (n in 1:length(data)) data[[n]]$name <- paste(data[[n]]$name, names(data)[n], sep = ",\n ")
-    data <- do.call(rbind, data)
-    data <- list(data)
-    names(data) <- names(prediction)[1]
-  }
-  
-  ## Plotting (code mostly taken from plotCombined)
-  
-  mynames <- c("time", "name", "value", "sigma", "condition")
-  
-  prediction <- cbind(wide2long(prediction), sigma = NA)
-  prediction <- subset(prediction, ...)
-  
-  prediction$condition <- as.numeric(prediction$condition)
-  
-  
-  if (!is.null(data)) {
-    data <- lbind(data)
-    data <- subset(data, ...)
-    
-    data$condition <- NaN
-    
-  }
-  
-  
-   
-  total <- rbind(prediction[, mynames], data[, mynames])
-  
-  if (facet == "wrap")
-    p <- ggplot2::ggplot(total, aes(x = time, y = value, ymin = value - sigma, ymax = value + sigma, 
-                           group = condition, color = condition)) + facet_wrap(~name, scales = scales)
-  if (facet == "grid")
-    p <- ggplot2::ggplot(total, aes(x = time, y = value, ymin = value - sigma, ymax = value + sigma)) + facet_grid(name ~ condition, scales = scales)
-  
-  if (!is.null(prediction))
-    p <- p +  geom_line(data = prediction)
-  
-  if (!is.null(data))
-    p <- p + geom_point(data = data, color = "black", alpha = .3) + 
-    geom_errorbar(data = data, width = 0, color = "black", alpha = .3)
-  
-  p <- p + theme_dMod()
-  
-  
-  attr(p, "data") <- list(data = data, prediction = prediction)
-  return(p)
-  
-  
-  
-}
-
 #' Plot Fluxes given a list of flux Equations
 #' 
 #' @param pouter parameters
@@ -612,46 +512,152 @@ plotFluxes <- function(pouter, x, times, fluxEquations, nameFlux = "Fluxes:", fi
     facet_wrap(~condition) + scale_fill_manual(values = cbPalette, name = nameFlux) +
     geom_density(stat = "identity", position = "stack", alpha = 0.3, color = "darkgrey", size = 0.4) +
     xlab("time") + ylab("flux contribution")
+   
+  attr(P, "out") <- out
   
   return(P)
   
 }
 
 
+stepDetect <- function(x, tol) {
+  
+  jumps <- 1
+  while (TRUE) {
+    i <- which(x - x[1] > tol)[1]
+    if (is.na(i)) break
+    jumps <- c(jumps, tail(jumps, 1) - 1 + i)
+    x <- x[-seq(1, i - 1, 1)]
+  }
+  
+  return(jumps)
+  
+  
+}
+
 #' Plotting objective values of a collection of fits
 #' 
 #' @param x data.frame with columns "value", "converged" and "iterations", e.g. 
 #' a \link{parframe}.
 #' @param ... arguments for subsetting of x
+#' @param tol maximal allowed difference between neighboring objective values
+#' to be recognized as one.
 #' @export
-plotValues <- function(x, ...) {
+plotValues <- function(x, tol = 1, ...) {
   
+  if (!missing(...)) x <- subset(x, ...)
+
+  jumps <- stepDetect(x$value, tol)
+  y.jumps <- seq(max(x$value), min(x$value), length.out = length(jumps))
+  
+    
   pars <- x
-  values <- "value"
-  mycolnames <- colnames(pars)
-  mycolnames[mycolnames == values] <- "value"
-  colnames(pars) <- mycolnames
- 
   pars <- cbind(index = 1:nrow(pars), pars[order(pars$value),])
-  pars <- subset(pars, ...)
-   
-  ggplot2::ggplot(pars, aes(x = index, y = value, pch = converged, color = iterations)) + geom_point() + 
+  
+  
+  P <- ggplot2::ggplot(pars, aes(x = index, y = value, pch = converged, color = iterations)) + 
+    geom_vline(xintercept = jumps, lty = 2) +
+    geom_point() + 
+    annotate("text", x = jumps + 1, y = y.jumps, label = jumps, hjust = 0, color = "red", size = 3) +
     xlab("index") + ylab("value") + theme_dMod()
+  
+  attr(P, "data") <- pars
+  attr(P, "jumps") <- jumps
+  
+  return(P)
   
 }
 
 #' Plot parameter values for a fitlist
 #' 
 #' @param x parameter frame as obtained by as.parframe(mstrust)
+#' @param tol maximal allowed difference between neighboring objective values
+#' to be recognized as one.
 #' @param ... arguments for subsetting of x
 #' @export
-plotPars <- function(x, ...){
+plotPars <- function(x, tol = 1, ...){
+  
+  if (!missing(...)) x <- subset(x, ...)
+  
+  jumps <- stepDetect(x$value, tol)
+  jump.index <- approx(jumps, jumps, xout = 1:length(x$value), method = "constant", rule = 2)$y
+  
+  #values <- round(x$value/tol)
+  #unique.values <- unique(values)
+  #jumps <- which(!duplicated(values))
+  #jump.index <- jumps[match(values, unique.values)]
+  x$index <- as.factor(jump.index)
+  
   myparframe <- x
   parNames <- attr(myparframe,"parameters")
-  parOut <- wide2long.data.frame(out = ((myparframe[, c("value",parNames)])) , keep = 1)
-  names(parOut) <- c("value","name","parvalue")
-  parOut <- subset(parOut, ...)
-  plot <- ggplot2::ggplot(parOut, aes(x = name, y = parvalue, color = value)) + geom_point() + theme_dMod() + theme(axis.text.x = element_text(angle = 270, hjust = 0, vjust = 0.5))
+  parOut <- wide2long.data.frame(out = ((myparframe[, c("index", "value", parNames)])) , keep = 1:2)
+  names(parOut) <- c("index", "value", "name", "parvalue")
+  plot <- ggplot2::ggplot(parOut, aes(x = name, y = parvalue, color = index)) + geom_boxplot(outlier.alpha = 0) + theme_dMod() + scale_color_dMod() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+  
+  attr(plot, "data") <- parOut
+  
   return(plot)
+  
 }
 
+#' Plot residuals for a fitlist
+#' 
+#' @param parframe Object of class \code{parframe}, e.g. returned by \link{mstrust}
+#' @param x Prediction function returning named list of data.frames with names as \code{data}.
+#' @param data Named list of data.frames, i.e. with columns \code{name}, \code{time}, 
+#' \code{value} and \code{sigma}.
+#' @param split List of characters specifying how to summarise the residuals by \code{sqrt(res_i^2)}, 
+#' \code{split[1]} used for x-axis, \code{split[2]} for grouping (color), and any additional for \code{facet_wrap()}
+#' @param ... Additional arguments for x
+#' @param errmodel object of type prdfn, the error model function.
+#' 
+#' @return A plot object of class \code{ggplot} with data.frame as attribute \code{attr(P,"out")}.
+#' @examples
+#' \dontrun{
+#'  # time axis:
+#'  plotResiduals(myfitlist, g*x*p, data, 
+#'     c("time","index","condition","name"), 
+#'     conditions = myconditions[1:4])
+#'  # condition axis (residuals summed over time for each observable and condition):
+#'  plotResiduals(myfitlist, g*x*p, data,  c("condition","name","index"))
+#' }
+#' @export
+#' @import plyr
+plotResiduals <- function(parframe, x, data, split = "condition", errmodel = NULL, ...){
+  timesD <- sort(unique(c(0, do.call(c, lapply(data, function(d) d$time)))))
+  if(!("index" %in% colnames(parframe)))
+    parframe$index <- 1:nrow(parframe)
+  
+  out <- do.call(rbind,lapply(1:nrow(parframe), function(j){
+    pred <- x(timesD, as.parvec(parframe,j), deriv = FALSE, ...)
+    
+    out_con <- do.call(rbind,lapply(names(pred), function(con){
+      err <- NULL
+      if (!is.null(errmodel)) {
+        err <- errmodel(out = pred[[con]], pars = getParameters(pred[[con]]), conditions = con)
+      }
+      out <- res(data[[con]], pred[[con]], err[[con]]) 
+      return(cbind(out,condition = con))
+    })
+    )
+    
+    out_par <- cbind(index = as.character(parframe[j,"index"]), out_con)
+    return(out_par)
+  })
+  )
+  if (!is.null(errmodel)) {
+    out <- plyr::ddply(out, split, summarise, res = sum(weighted.residual^2 + log(sigma^2))) 
+  } else{
+    out <- plyr::ddply(out, split, summarise, res = sum(weighted.residual^2)) 
+  }
+  groupvar <- split[1]
+  if(length(split) > 1){
+    groupvar <- split[2]
+  }
+  
+  P <- ggplot2::ggplot(out, aes_string(x = split[1], y = "res", color = groupvar, group = groupvar)) + theme_dMod() + geom_point() + geom_line()
+  if(length(split) > 2)
+    P <- P + facet_wrap(split[3:length(split)]) 
+  attr(P,"out") <- out
+  return(P)
+}

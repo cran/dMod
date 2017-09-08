@@ -9,25 +9,25 @@
 \alias{getParameters.prdlist}
 \title{Extract the parameters of an object}
 \usage{
-getParameters(x, conditions = NULL, ...)
+getParameters(..., conditions = NULL)
 
-\method{getParameters}{odemodel}(x, conditions = NULL, ...)
+\method{getParameters}{odemodel}(x, conditions = NULL)
 
-\method{getParameters}{fn}(x, conditions = NULL, ...)
+\method{getParameters}{fn}(x, conditions = NULL)
 
-\method{getParameters}{parvec}(x, conditions = NULL, ...)
+\method{getParameters}{parvec}(x, conditions = NULL)
 
-\method{getParameters}{prdframe}(x, conditions = NULL, ...)
+\method{getParameters}{prdframe}(x, conditions = NULL)
 
-\method{getParameters}{prdlist}(x, conditions = NULL, ...)
+\method{getParameters}{prdlist}(x, conditions = NULL)
 }
 \arguments{
-\item{x}{object from which the parameters should be extracted}
+\item{...}{objects from which the parameters should be extracted}
 
 \item{conditions}{character vector specifying the conditions to 
 which \code{getParameters} is restricted}
 
-\item{...}{additional arguments (not used right now)}
+\item{x}{object from which the parameters are extracted}
 }
 \value{
 The parameters in a format that depends on the class of \code{x}.

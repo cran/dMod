@@ -4,8 +4,8 @@
 \alias{Pexpl}
 \title{Parameter transformation}
 \usage{
-Pexpl(trafo, parameters = NULL, condition = NULL, compile = FALSE,
-  modelname = NULL, verbose = FALSE)
+Pexpl(trafo, parameters = NULL, attach.input = FALSE, condition = NULL,
+  compile = FALSE, modelname = NULL, verbose = FALSE)
 }
 \arguments{
 \item{trafo}{Named character vector. Names correspond to the parameters being fed into
@@ -15,6 +15,9 @@ the inner parameters in terms of other parameters (the outer parameters)}
 \item{parameters}{Character vector. Optional. If given, the generated parameter
 transformation returns values for each element in \code{parameters}. If elements of
 \code{parameters} are not in \code{names(trafo)} the identity transformation is assumed.}
+
+\item{attach.input}{attach those incoming parameters to output which are not overwritten by
+the parameter transformation.}
 
 \item{condition}{character, the condition for which the transformation is generated}
 

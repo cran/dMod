@@ -61,7 +61,7 @@ compare.list <- function(vec1, vec2 = NULL, reference = 1, ...) {
     vec1.inner <- vec1[[reference]]
     vec2.inner <- vec1[[i]]
     out1 <- NULL
-    if(class(vec1.inner) %in% c("eqnvec", "data.frame")) {
+    if(any(class(vec1.inner) %in% c("eqnvec", "data.frame"))) {
       out1 <- list(compare(vec1.inner, vec2.inner))
       names(out1) <- "object"
     }
@@ -185,10 +185,12 @@ combine <- function(...) {
   mylist <- lapply(mylist, function(l) {
     
     if(is.data.frame(l)) {
+      i <- sapply(l, is.factor)
+      l[i] <- lapply(l[i], as.character)
       present.list <- as.list(l)
       missing.names <- setdiff(mynames, names(present.list))
       missing.list <- structure(as.list(rep(NA, length(missing.names))), names = missing.names)
-      combined.data <- do.call(cbind.data.frame, c(present.list, missing.list))
+      combined.data <- do.call(function(...) cbind.data.frame(..., stringsAsFactors = FALSE), c(present.list, missing.list))
       rownames(combined.data) <- rownames(l)
     }
     if(is.matrix(l)) {
@@ -277,7 +279,7 @@ blockdiagSymb <- function(M, N) {
 #' @return data.frame in long format, i.e. columns "time" (out[,1]), "name" (colnames(out[,-1])), 
 #' "value" (out[,-1]) and, if out was a list, "condition" (names(out))
 #' @export
-wide2long <- function(out, keep, na.rm) {
+wide2long <- function(out, keep = 1, na.rm = FALSE) {
   
   UseMethod("wide2long", out)
   
@@ -356,7 +358,7 @@ wide2long.list <- function(out, keep = 1, na.rm = FALSE) {
     numconditions <- conditions
   
   
-  outlong <- do.call(rbind, lapply(1:length(conditions), function(cond) {
+  outlong <- do.call(rbind, lapply(1:max(c(length(conditions), 1)), function(cond) {
     
     cbind(wide2long.matrix(out[[cond]]), condition = numconditions[cond])
     
@@ -427,23 +429,120 @@ expand.grid.alt <- function(seq1, seq2) {
   cbind(Var1=rep.int(seq1, length(seq2)), Var2=rep(seq2, each=length(seq1)))
 }
 
-#' Load a template file in the editor
+
+
+#' Compile one or more prdfn, obsfn or parfn objects
 #' 
-#' @param i Integer, choose a template to be loaded
-#' @details Possible templates are:
-#' i = 1: Do parameter estimation in a dynamic model with fixed forcings
+#' @param ... Objects of class parfn, obsfn or prdfn
+#' @param output Optional character of the file to be produced. If several objects were
+#' passed, the different C files are all compiled into one shared object file.
+#' @param args Additional arguments for the R CMD SHLIB call, e.g. \code{-leinspline}.
+#' @param cores Number of cores used for compilation when several files are compiled.
 #' @export
-loadTemplate <- function(i = 1) {
+compile <- function(..., output = NULL, args = NULL, cores = 1) {
   
-  path <- path.package("dMod")
-  if(i == 1) {
-    system(paste0("cp ", path, "/templates/R2CTemplate.R mymodel.R"))
-    file.edit("mymodel.R")
+  objects <- list(...)
+  obj.names <- as.character(substitute(list(...)))[-1]
+  # Get full list of .c and .cpp files for the obsfn, parfn and prdfn objects in ...
+  files <- NULL
+  for (i in 1:length(objects)) {
+    
+    if (inherits(objects[[i]], c("obsfn", "parfn", "prdfn"))) {
+      # Get and reset modelname
+      filename <- modelname(objects[[i]])
+      if (!is.null(output))
+        eval(parse(text = paste0("modelname(", obj.names[i], ") <<- '", output, "'")))
+      # Expand modelname by possible endings and check if file exists
+      filename <- outer(filename, c("", "_deriv", "_s", "_sdcv"), paste0)
+      files.obj <- c(paste0(filename, ".c"), paste0(filename, ".cpp"))
+      files.obj <- files.obj[file.exists(files.obj)]
+      files <- union(files, files.obj)
+    }
   }
+  
+  
+  roots <- sapply(files, function(f) {
+    l <- strsplit(f, split = ".", fixed = TRUE)[[1]]
+    paste(l[1:(length(l)-1)], collapse = ".")
+  })
+  
+  .so <- .Platform$dynlib.ext
+  #print(files)
+  
+  #return(files)
+  if (is.null(output)) {
+    compilation_out <- mclapply(1:length(files), function(i) {
+      try(dyn.unload(paste0(roots[i], .so)), silent = TRUE)
+      system(paste0(R.home(component = "bin"), "/R CMD SHLIB ", files[i], " ", args))
+    }, mc.cores = cores, mc.silent = FALSE)
+    for (r in roots) dyn.load(paste0(r, .so))
+  } else {
+    for (r in roots) try(dyn.unload(paste0(r, .so)), silent = TRUE)
+    try(dyn.unload(output), silent = TRUE)
+    system(paste0(R.home(component = "bin"), "/R CMD SHLIB ", paste(files, collapse = " "), " -o ", output, .so, " ", args))
+    dyn.load(paste0(output, .so))
+  }
+  
   
 }
 
 
 
+#' Determine loaded DLLs available in working directory
+#' 
+#' @return Character vector with the names of the loaded DLLs available in the working directory
+#' @export
+getLocalDLLs <- function() {
+  
+  all.dlls <- getLoadedDLLs()
+  is.local <- sapply(all.dlls, function(x) grepl(getwd(), unclass(x)$path, fixed = TRUE))
+  names(is.local)[is.local]
+  
+}
 
 
+#' Load shared object for a dMod object
+#' 
+#' Usually when restarting the R session, although all objects are saved in
+#' the workspace, the dynamic libraries are not linked any more. \code{loadDLL}
+#' is a wrapper for \code{dyn.load} that uses the "modelname" attribute of
+#' dMod objects like prediction functions, observation functions, etc. to
+#' load the corresponding shared object.
+#' 
+#' @param ... objects of class prdfn, obsfn, parfn, objfn, ...
+#' 
+#' @export
+loadDLL <- function(...) {
+  
+  .so <- .Platform$dynlib.ext
+  models <- modelname(...)
+  files <- paste0(outer(models, c("", "_s", "_sdcv", "_deriv"), paste0), .so)
+  files <- files[file.exists(files)]
+  
+  for (f in files) {
+    try(dyn.unload(f), silent = TRUE)
+    dyn.load(f)
+  }
+  
+  
+  message("The following local files were dynamically loaded: ", paste(files, collapse = ", "))
+  
+  
+  
+}
+
+
+sanitizeCores <- function(cores)  {
+  
+ if (Sys.info()[['sysname']] == "Windows") cores <- 1
+ return(cores)
+  
+}
+
+sanitizeConditions <- function(conditions) {
+  
+  new <- str_replace_all(conditions, "[[:punct:]]", "_")
+  new <- str_replace_all(new, "\\s+", "_")
+  return(new)
+  
+}

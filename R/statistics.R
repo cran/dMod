@@ -17,7 +17,7 @@
 #' \code{list(rinit = .1, rmax = 10, iterlim = 10, fterm = sqrt(.Machine$double.eps), mterm = sqrt(.Machine$double.eps))}.
 #' See \link{trust} for more details.
 #' @param verbose Logical, print verbose messages.
-#' @param cores number of cores used by \code{mclapply()} when computing profiles for several
+#' @param cores number of cores used when computing profiles for several
 #' parameters.
 #' @param ... Arguments going to obj()
 #' @details Computation of the profile likelihood is based on the method of Lagrangian multipliers
@@ -38,6 +38,8 @@
 #' stepsize is reduced. For small deviations, either compared the abolute tolerance \code{atol} or the
 #' relative tolerance \code{rtol}, the stepsize may be increased. \code{max} and \code{min} are upper and lower
 #' bounds for \code{stepsize}. \code{limit} is the maximum number of steps that are take for the profile computation.
+#' \code{stop} is a character, usually "value" or "data", for which the significance level \code{alpha}
+#' is evaluated.
 #' 
 #' @return Named list of length one. The name is the parameter name. The list enty is a
 #' matrix with columns "value" (the objective value), "constraint" (deviation of the profiled paramter from
@@ -45,7 +47,6 @@
 #' iteration), "valueData" and "valuePrior" (if specified in obj), one column per parameter (the profile paths).
 #' @example inst/examples/profiles.R
 #' @export
-#' @import trust
 profile <- function(obj, pars, whichPar, alpha = 0.05, 
                           limits = c(lower = -Inf, upper = Inf), 
                           method = c("integrate", "optimize"),
@@ -62,22 +63,25 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
   # Initialize control parameters depending on method
   method  <- match.arg(method)
   if (method == "integrate") {
-    sControl <- list(stepsize = 1e-4, min = 1e-4, max = Inf, atol = 1e-2, rtol = 1e-2, limit = 500)
+    sControl <- list(stepsize = 1e-4, min = 1e-4, max = Inf, atol = 1e-2, rtol = 1e-2, limit = 500, stop = "value")
     aControl <- list(gamma = 1, W = "hessian", reoptimize = FALSE, correction = 1, reg = .Machine$double.eps)
     oControl <- list(rinit = .1, rmax = 10, iterlim = 10, fterm = sqrt(.Machine$double.eps), mterm = sqrt(.Machine$double.eps))
   }
   if (method == "optimize") {
-    sControl <- list(stepsize = 1e-2, min = 1e-4, max = Inf, atol = 1e-1, rtol = 1e-1, limit = 100)
+    sControl <- list(stepsize = 1e-2, min = 1e-4, max = Inf, atol = 1e-1, rtol = 1e-1, limit = 100, stop = "value")
     aControl <- list(gamma = 0, W = "identity", reoptimize = TRUE, correction = 1, reg = 0)
     oControl <- list(rinit = .1, rmax = 10, iterlim = 100, fterm = sqrt(.Machine$double.eps), mterm = sqrt(.Machine$double.eps))
   }
+  
+  # Check if on Windows
+  cores <- sanitizeCores(cores)
   
   # Substitute user-set control parameters
   if (!is.null(stepControl)) sControl[match(names(stepControl), names(sControl))] <- stepControl
   if (!is.null(algoControl)) aControl[match(names(algoControl), names(aControl))] <- algoControl
   if (!is.null(optControl )) oControl[match(names(optControl), names(oControl ))] <- optControl
     
-  do.call(rbind, parallel::mclapply(whichPar, function(whichPar) {
+  do.call(rbind, mclapply(whichPar, function(whichPar) {
     
     
     if (is.character(whichPar)) whichPar <- which(names(pars) == whichPar)
@@ -172,8 +176,12 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
       out.attributes <- attributes(out)[sapply(attributes(out), is.numeric)]
       out.attributes.names <- names(out.attributes)
       
+      
       return(c(list(dy = dy, value = out$value, gradient = out$gradient, correction = correction, valid = valid, attributes = out.attributes.names),
                out.attributes))
+      
+      
+      
       
     }
     doIteration <- function() {
@@ -202,7 +210,8 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
                      oControl[names(oControl)!="rinit"],
                      list(...)[names(list(...)) != "fixed"])
         
-        myfit <- try(do.call(trust::trust, arglist), silent=FALSE)
+        
+        myfit <- try(do.call(trust, arglist), silent=FALSE)
         if(!inherits(myfit, "try-error")) {
           y.try[names(myfit$argument)] <- as.vector(myfit$argument)  
         } else {
@@ -286,7 +295,7 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
     
     
     
-    threshold <- lagrange.out$value + delta
+    threshold <- lagrange.out[[sControl$stop]] + delta
     out.attributes <- unlist(lagrange.out[lagrange.out$attributes])
     
     out <- c(value = lagrange.out$value, 
@@ -348,8 +357,8 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
                      out.attributes, 
                      y))
       
-      
-      if (lagrange.out$value > threshold | constraint.out$value > limits[2]) break
+      value <- lagrange.out[[sControl$stop]]
+      if (value > threshold | constraint.out$value > limits[2]) break
       
       i <- i + 1
       
@@ -408,7 +417,8 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
                      y), 
                    out)
       
-      if(lagrange.out$value > threshold  | constraint.out$value < limits[1]) break
+      value <- lagrange.out[[sControl$stop]]
+      if (value > threshold | constraint.out$value < limits[1]) break
       
       i <- i + 1
       
@@ -445,3 +455,102 @@ progressBar <- function(percentage, size = 50, number = TRUE) {
   
 }
 
+#' Profile uncertainty extraction
+#' 
+#' @description extract parameter uncertainties from profiles
+#' @param object object of class \code{parframe}, returned from \link{profile} function.
+#' @param parm a specification of which parameters are to be given confidence intervals, 
+#' either a vector of numbers or a vector of names. If missing, all parameters are considered.
+#' @param level the confidence level required.
+#' @param ... not used right now.
+#' @param val.column the value column used in the parframe, usually 'data'.
+#' @export
+confint.parframe <- function(object, parm = NULL, level = 0.95, ..., val.column = "data") {
+  
+  profile <- object
+  
+  maxvalue <- qchisq(level, df = 1)
+  
+  proflist <- as.data.frame(profile)
+  obj.attributes <- attr(profile, "obj.attributes")
+  
+  if(is.data.frame(proflist)) {
+    whichPars <- unique(proflist$whichPar)
+    if (!is.null(parm)) whichPars <- intersect(whichPars, parm)
+    if (length(whichPars) == 0) stop("profile does not contain the required parameters.")
+    proflist <- lapply(whichPars, function(n) {
+      with(proflist, proflist[whichPar == n, ])
+    })
+    names(proflist) <- whichPars
+  }
+  
+  # Discard faulty profiles
+  proflistidx <- sapply(proflist, function(prf) any(class(prf) == "data.frame"))
+  proflist <- proflist[proflistidx]
+  if (sum(!proflistidx) > 0) {
+    warning(sum(!proflistidx), " profiles discarded.", call. = FALSE)
+  }
+  subdata <- do.call(rbind, lapply(names(proflist), function(n) {
+    #print(n)
+    parvalues <- proflist[[n]][, n]
+    values <- proflist[[n]][, val.column]
+    origin <- which.min(abs(proflist[[n]][, "constraint"]))
+    zerovalue <- proflist[[n]][origin, val.column]
+    deltavalues <- values - zerovalue
+    deltavalues[deltavalues < 0] <- 0
+    deltavalues <- sqrt(deltavalues)
+    deltavalues[1:origin] <- - deltavalues[1:origin]
+    lpars <- length(parvalues)
+    x <- abs(deltavalues - sqrt(maxvalue))
+    position_upper <- which(x %in% sort(x)[1:2])[1:2]
+    x <- abs(deltavalues + sqrt(maxvalue))
+    position_lower <- which(x %in% sort(x)[1:2])[1:2]
+    #cat("deltas:",deltavalues[position_lower],deltavalues[position_upper], "\n")
+    #cat("pars:",parvalues[position_lower],parvalues[position_upper], "\n")
+    parlower <- try(approxExtrap(deltavalues[position_lower], y = parvalues[position_lower], xout = -sqrt(maxvalue)), silent = TRUE)
+    parupper <- try(approxExtrap(deltavalues[position_upper], y = parvalues[position_upper], xout = sqrt(maxvalue)), silent = TRUE)
+    
+    if (inherits(parlower, "try-error")) parlower <- list(x = NA, y = NA)
+    if (inherits(parupper, "try-error")) parupper <- list(x = NA, y = NA)
+    
+    parmin <- parvalues[origin]
+    data.frame(name = n, value = parmin, lower = parlower$y, upper = parupper$y)
+  }))
+  return(subdata)
+}
+
+# Extrapolation extension to approx
+# 
+# from Hmisc package, built on approx
+approxExtrap <- function (x, y, xout, method = "linear", n = 50, rule = 2, f = 0, ties = "ordered", na.rm = FALSE) {
+if (is.list(x)) {
+  y <- x[[2]]
+  x <- x[[1]]
+}
+if (na.rm) {
+  d <- !is.na(x + y)
+  x <- x[d]
+  y <- y[d]
+}
+d <- !duplicated(x)
+x <- x[d]
+y <- y[d]
+d <- order(x)
+x <- x[d]
+y <- y[d]
+w <- approx(x, y, xout = xout, method = method, n = n, rule = 2, 
+            f = f, ties = ties)$y
+r <- range(x)
+d <- xout < r[1]
+if (any(is.na(d))) 
+  stop("NAs not allowed in xout")
+if (any(d)) 
+  w[d] <- (y[2] - y[1])/(x[2] - x[1]) * (xout[d] - x[1]) + 
+  y[1]
+d <- xout > r[2]
+n <- length(y)
+if (any(d)) 
+  w[d] <- (y[n] - y[n - 1])/(x[n] - x[n - 1]) * (xout[d] - 
+                                                   x[n - 1]) + y[n - 1]
+list(x = xout, y = w)
+}

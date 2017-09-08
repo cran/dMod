@@ -151,7 +151,6 @@ strelide <- function(string, width, where = "right", force = FALSE) {
 
 
 
-
 #' Non-Linear Optimization, multi start
 #' 
 #' @description Wrapper around \code{\link{trust}} allowing for multiple fits 
@@ -219,11 +218,15 @@ strelide <- function(string, width, where = "right", force = FALSE) {
 #' @example inst/examples/test_blocks.R
 #'     
 #' @export
+#' @import parallel
 mstrust <- function(objfun, center, studyname, rinit = .1, rmax = 10, fits = 20, cores = 1,
                     samplefun = "rnorm", resultPath = ".", stats = FALSE,
                     ...) {
 
   narrowing <- NULL
+  
+  # Check if on Windows
+  cores <- sanitizeCores(cores)
   
   # Argument parsing, sorting, and enhancing
   # Gather all function arguments
@@ -317,7 +320,7 @@ mstrust <- function(objfun, center, studyname, rinit = .1, rmax = 10, fits = 20,
     flush(logfile)
   }
 
-  m_parlist <- as.parlist(parallel::mclapply(1:fits, function(i) {
+  m_parlist <- as.parlist(mclapply(1:fits, function(i) {
     argstrust$parinit <- center + do.call(samplefun, argssample)
     fit <- do.call(trust, c(argstrust, argsobj))
 
@@ -433,7 +436,6 @@ mstrust <- function(objfun, center, studyname, rinit = .1, rmax = 10, fits = 20,
 
 
 
-
 #' Construct fitlist from temporary files.
 #'
 #' @description An aborted \code{\link{mstrust}}
@@ -442,7 +444,7 @@ mstrust <- function(objfun, center, studyname, rinit = .1, rmax = 10, fits = 20,
 #'
 #' @param folder Path to the folder where the fit has left its results.
 #'
-#' @details The commands \code{\link{mstrust}} save
+#' @details The command \code{\link{mstrust}} saves
 #'   each completed fit along the multi-start sequence such that the results can
 #'   be resurected on abortion. This command loads a fitlist from these
 #'   intermediate results.
@@ -497,8 +499,9 @@ load.parlist <- function(folder) {
 #' @export
 as.parvec.parframe <- function(x, index = 1, ...) {
   parframe <- x
-  m_order <- order(parframe$value)
+  m_order <- 1:nrow(x)
   metanames <- attr(parframe, "metanames")
+  if ("value" %in% metanames) m_order <- order(parframe$value)
   best <- as.parvec(unlist(parframe[m_order[index], attr(parframe, "parameters")]))
   if ("converged" %in% metanames && !parframe[m_order[index],]$converged) {
     warning("Parameter vector of an unconverged fit is selected.", call. = FALSE)

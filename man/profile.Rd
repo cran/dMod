@@ -37,7 +37,7 @@ See \link{trust} for more details.}
 
 \item{verbose}{Logical, print verbose messages.}
 
-\item{cores}{number of cores used by \code{mclapply()} when computing profiles for several
+\item{cores}{number of cores used when computing profiles for several
 parameters.}
 
 \item{...}{Arguments going to obj()}
@@ -70,6 +70,8 @@ of the objective function is compared with the actual change. If this is larger 
 stepsize is reduced. For small deviations, either compared the abolute tolerance \code{atol} or the
 relative tolerance \code{rtol}, the stepsize may be increased. \code{max} and \code{min} are upper and lower
 bounds for \code{stepsize}. \code{limit} is the maximum number of steps that are take for the profile computation.
+\code{stop} is a character, usually "value" or "data", for which the significance level \code{alpha}
+is evaluated.
 }
 \examples{
 \dontrun{

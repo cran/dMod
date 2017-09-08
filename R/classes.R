@@ -10,6 +10,7 @@
 #' @param fixed Character vector with the names of parameters (initial values and dynamic) for which
 #' no sensitivities are required (will speed up the integration).
 #' @param modelname Character, the name of the C file being generated.
+#' @param solver Solver for which the equations are prepared.
 #' @param gridpoints Integer, the minimum number of time points where the ODE is evaluated internally
 #' @param verbose Print compiler output to R command line.
 #' @param ... Further arguments being passed to funC.
@@ -17,17 +18,25 @@
 #' @export
 #' @example inst/examples/odemodel.R
 #' @import cOde
-odemodel <- function(f, deriv = TRUE, forcings=NULL, fixed=NULL, modelname = "odemodel", gridpoints = NULL, verbose = FALSE, ...) {
+odemodel <- function(f, deriv = TRUE, forcings=NULL, fixed=NULL, modelname = "odemodel", solver = c("deSolve", "Sundials"), gridpoints = NULL, verbose = FALSE, ...) {
   
   
   if (is.null(gridpoints)) gridpoints <- 2
   
   f <- as.eqnvec(f)
   modelname_s <- paste0(modelname, "_s")
+  solver <- match.arg(solver)
   
-  func <- cOde::funC(f, forcings = forcings, modelname = modelname , nGridpoints = gridpoints, ...)
+  func <- cOde::funC(f, forcings = forcings, fixed = fixed, modelname = modelname , solver = solver, nGridpoints = gridpoints, ...)
   extended <- NULL
-  if (deriv) {  
+  if (solver == "Sundials") {
+    # Sundials does not need "extended" by itself, but dMod relies on it.
+    extended <- func
+    attr(extended, "deriv") <- TRUE
+    attr(extended, "variables") <- c(attr(extended, "variables"), attr(extended, "variablesSens"))
+  }
+  
+  if (deriv && solver == "deSolve") {  
     s <- sensitivitiesSymb(f, 
                            states = setdiff(attr(func, "variables"), fixed), 
                            parameters = setdiff(attr(func, "parameters"), fixed), 
@@ -35,7 +44,7 @@ odemodel <- function(f, deriv = TRUE, forcings=NULL, fixed=NULL, modelname = "od
                            reduce = TRUE)
     fs <- c(f, s)
     outputs <- attr(s, "outputs")
-    extended <- cOde::funC(fs, forcings = forcings, outputs = outputs, modelname = modelname_s, ...)
+    extended <- cOde::funC(fs, forcings = forcings, outputs = outputs, modelname = modelname_s, solver = solver, ...)
   }  
   
   out <- list(func = func, extended = extended)
@@ -278,8 +287,8 @@ parlist <- function(...) {
 #' Parameter vector
 #'
 #' @description A parameter vector is a named numeric vector (the parameter values)
-#' together with a "deriv" attribute (the Jacobian of a parameter transformation by which
-#' the parameter vector was generated).
+#' together with a "deriv" attribute 
+#' (the Jacobian of a parameter transformation by which the parameter vector was generated).
 #' @param ... objects to be concatenated
 #' @param deriv matrix with rownames (according to names of \code{...}) and colnames
 #' according to the names of the parameter by which the parameter vector was generated.
@@ -612,6 +621,10 @@ objframe <- function(mydata, deriv = NULL, deriv.err = NULL) {
   parameters.x2 <- attr(x2, "parameters")
   parameters12 <- union(parameters.x1, parameters.x2)
   
+  modelname.x1 <- attr(x1, "modelname")
+  modelname.x2 <- attr(x2, "modelname")
+  modelname12 <- union(modelname.x1, modelname.x2)
+  
   
   # objfn + objfn
   if (inherits(x1, "objfn") & inherits(x2, "objfn")) {
@@ -633,6 +646,7 @@ objframe <- function(mydata, deriv = NULL, deriv.err = NULL) {
     class(outfn) <- c("objfn", "fn")
     attr(outfn, "conditions") <- conditions12
     attr(outfn, "parameters") <- parameters12
+    attr(outfn, "modelname") <- modelname12
     return(outfn)
     
   }
@@ -641,6 +655,67 @@ objframe <- function(mydata, deriv = NULL, deriv.err = NULL) {
 }
 
 
+#' Multiplication of objective functions with scalars
+#' 
+#' @description The \code{\%.*\%} operator allows to multiply objects of class objlist or objfn with
+#' a scalar.
+#' 
+#' @param x1 object of class objfn or objlist.
+#' @param x2 numeric of length one.
+#' @return An objective function or objlist object.
+#' 
+#' @export
+"%.*%" <- function(x1, x2) {
+  
+  if (inherits(x2, "objlist")) {
+    
+    out <- lapply(x2, function(x) {
+      x1*x
+    })
+    # Multiply attributes
+    out2.attributes <- attributes(x2)[sapply(attributes(x2), is.numeric)]
+    attr.names <- names(out2.attributes)
+    out.attributes <- lapply(attr.names, function(n) {
+      x1*attr(x2, n)
+    })
+    attributes(out) <- attributes(x2)
+    attributes(out)[attr.names] <- out.attributes
+    
+    return(out)
+  
+    
+  } else if (inherits(x2, "objfn")) {
+    
+    conditions12 <- attr(x2, "conditions")
+    parameters12 <- attr(x2, "parameters")
+    modelname12 <- attr(x2, "modelname")
+    outfn <- function(..., fixed = NULL, deriv = TRUE, conditions = conditions12, env = NULL) {
+      
+      arglist <- list(...)
+      arglist <- arglist[match.fnargs(arglist, c("pars"))]
+      pars <- arglist[[1]]
+      
+      v1 <- x1
+      v2 <- x2(pars = pars, fixed = fixed, deriv = deriv, conditions = conditions, env = attr(v1, "env"))
+      
+      out <- v1 %.*% v2
+      attr(out, "env") <- attr(v2, "env")
+      return(out)
+    }
+    
+    class(outfn) <- c("objfn", "fn")
+    attr(outfn, "conditions") <- conditions12
+    attr(outfn, "parameters") <- parameters12
+    attr(outfn, "modelname") <- modelname12
+    return(outfn)
+    
+  } else {
+    
+    x1*x2
+    
+  }
+  
+}
 
 
 #' Direct sum of functions
@@ -881,7 +956,12 @@ test_conditions <- function(c1, c2) {
       mapping <- function(out, pars) {
         outfn(out = out, pars = pars, conditions = conditions.out[i])[[1]]
       }
+      m1 <- modelname(p1, conditions = conditions.p1[i])
+      m2 <- modelname(p2, conditions = conditions.p2[i])
+      attr(mapping, "modelname") <- union(m1, m2)
       attr(mapping, "parameters") <- getParameters(p2, conditions = conditions.out[i])
+      
+      
       
       return(mapping)
     })
@@ -926,6 +1006,9 @@ test_conditions <- function(c1, c2) {
       mapping <- function(out, pars) {
         outfn(out = out, pars = pars, conditions = conditions.out[i])[[1]]
       }
+      m1 <- modelname(p1, conditions = conditions.p1[i])
+      m2 <- modelname(p2, conditions = conditions.p2[i])
+      attr(mapping, "modelname") <- union(m1, m2)
       attr(mapping, "parameters") <- getParameters(p2, conditions = conditions.out[i])
       
       return(mapping)
@@ -971,6 +1054,9 @@ test_conditions <- function(c1, c2) {
       mapping <- function(times, pars, deriv = TRUE) {
         outfn(times = times, pars = pars, deriv = deriv, conditions = conditions.out[i])[[1]]
       }
+      m1 <- modelname(p1, conditions = conditions.p1[i])
+      m2 <- modelname(p2, conditions = conditions.p2[i])
+      attr(mapping, "modelname") <- union(m1, m2)
       attr(mapping, "parameters") <- getParameters(p2, conditions = conditions.out[i])
       
       return(mapping)
@@ -1019,6 +1105,9 @@ test_conditions <- function(c1, c2) {
         outfn(times = times, pars = pars, deriv = deriv, conditions = conditions.out[i])[[1]]
       }
       attr(mapping, "parameters") <- getParameters(p2, conditions = conditions.out[i])
+      m1 <- modelname(p1, conditions = conditions.p1[i])
+      m2 <- modelname(p2, conditions = conditions.p2[i])
+      attr(mapping, "modelname") <- union(m1, m2)
       
       return(mapping)
     })
@@ -1061,6 +1150,9 @@ test_conditions <- function(c1, c2) {
       mapping <- function(pars, fixed = NULL, deriv = TRUE) {
         outfn(pars = pars, fixed = fixed, deriv = deriv, conditions = conditions.out[i])[[1]]
       }
+      m1 <- modelname(p1, conditions = conditions.p1[i])
+      m2 <- modelname(p2, conditions = conditions.p2[i])
+      attr(mapping, "modelname") <- union(m1, m2)
       attr(mapping, "parameters") <- getParameters(p2, conditions = conditions.out[i])
       
       return(mapping)
@@ -1077,46 +1169,6 @@ test_conditions <- function(c1, c2) {
     
   }
   
-  # parfn * parfn -> parfn
-  if (inherits(p1, "parfn") & inherits(p2, "parfn")) {
-    
-    conditions.p1 <- attr(p1, "conditions")
-    conditions.p2 <- attr(p2, "conditions")
-    conditions.out <- out_conditions(conditions.p1, conditions.p2)
-    
-    
-    outfn <- function(..., fixed = NULL, deriv = TRUE, conditions = NULL, env = NULL) {
-      
-      arglist <- list(...)
-      arglist <- arglist[match.fnargs(arglist, c("pars"))]
-      pars <- arglist[[1]]
-      
-      step1 <- p2(pars = pars, fixed = fixed, deriv = deriv, conditions = conditions)
-      step2 <- do.call(c, lapply(1:length(step1), function(i) p1(pars = step1[[i]], deriv = deriv, conditions = names(step1)[i])))
-      return(step2)
-      
-    }
-    
-    # Generate mappings for parameters function
-    l <- max(c(1, length(conditions.out)))
-    mappings <- lapply(1:l, function(i) {
-      mapping <- function(pars, fixed = NULL, deriv = TRUE) {
-        outfn(pars = pars, fixed = fixed, deriv = deriv, conditions = conditions.out[i])[[1]]
-      }
-      attr(mapping, "parameters") <- getParameters(p2, conditions = conditions.out[i])
-      
-      return(mapping)
-    })
-    names(mappings) <- conditions.out
-    attr(outfn, "mappings") <- mappings
-    
-    attr(outfn, "parameters") <- attr(p2, "parameters")
-    attr(outfn, "conditions") <- conditions.out
-    class(outfn) <- c("parfn", "fn", "composed")
-    
-    return(outfn)
-    
-  }
   
   # objfn * parfn -> objfn
   if (inherits(p1, "objfn") & inherits(p2, "parfn")) {
@@ -1322,21 +1374,27 @@ getDerivs.objlist <- function(x, ...) {
 
 #' Extract the parameters of an object
 #' 
-#' @param x object from which the parameters should be extracted
+#' @param ... objects from which the parameters should be extracted
 #' @param conditions character vector specifying the conditions to 
 #' which \code{getParameters} is restricted
-#' @param ... additional arguments (not used right now)
 #' @return The parameters in a format that depends on the class of \code{x}.
 #' @export
-getParameters <- function(x, conditions = NULL, ...) {
-  UseMethod("getParameters", x)
+getParameters <- function(..., conditions = NULL) {
+  
+  
+  Reduce("union", lapply(list(...), function(x) {
+    UseMethod("getParameters", x)  
+  }))
+  
+  
 }
 
 
 
 #' @export
 #' @rdname getParameters
-getParameters.odemodel <- function(x, conditions = NULL, ...) {
+#' @param x object from which the parameters are extracted
+getParameters.odemodel <- function(x, conditions = NULL) {
 
   parameters <- c(
     attr(x$func, "variables"),
@@ -1350,7 +1408,7 @@ getParameters.odemodel <- function(x, conditions = NULL, ...) {
 
 #' @export
 #' @rdname getParameters
-getParameters.fn <- function(x, conditions = NULL, ...) {
+getParameters.fn <- function(x, conditions = NULL) {
   
   if (is.null(conditions)) {
     parameters <- attr(x, "parameters")
@@ -1367,7 +1425,7 @@ getParameters.fn <- function(x, conditions = NULL, ...) {
 }
 #' @export
 #' @rdname getParameters
-getParameters.parvec <- function(x, conditions = NULL, ...) {
+getParameters.parvec <- function(x, conditions = NULL) {
   
   names(x)
   
@@ -1375,7 +1433,7 @@ getParameters.parvec <- function(x, conditions = NULL, ...) {
 
 #' @export
 #' @rdname getParameters
-getParameters.prdframe <- function(x, conditions = NULL, ...) {
+getParameters.prdframe <- function(x, conditions = NULL) {
   
   attr(x, "parameters")
   
@@ -1383,7 +1441,7 @@ getParameters.prdframe <- function(x, conditions = NULL, ...) {
 
 #' @export
 #' @rdname getParameters
-getParameters.prdlist <- function(x, conditions = NULL, ...) {
+getParameters.prdlist <- function(x, conditions = NULL) {
   
   select <- 1:length(x)
   if (!is.null(conditions)) select <- intersect(names(x), conditions)
@@ -1421,4 +1479,109 @@ getConditions.fn <- function(x, ...) {
   
   attr(x, "conditions")
   
+}
+
+#' Get and set modelname
+#' 
+#' @description The modelname attribute refers to the name of a C file associated with
+#' a dMod function object like prediction-, parameter transformation- or 
+#' objective functions.
+#' 
+#' @param ... objects of type \code{prdfn}, \code{parfn}, \code{objfn}
+#' @param conditions character vector of conditions
+#' @return character vector of model names, corresponding to C files
+#' in the local directory.
+#' 
+#' @export
+modelname <- function(..., conditions = NULL) {
+  
+  Reduce("union", lapply(list(...), mname, conditions = conditions))
+    
+}
+
+#' Get modelname from single object (used internally)
+#' 
+#' @param x dMod object
+#' @param conditions character vector of conditions
+#' @export
+mname <- function(x, conditions = NULL) {
+  UseMethod("mname", x)
+}
+
+#' @export
+#' @rdname mname
+mname.NULL <- function(x, conditions = NULL) NULL
+
+#' @export
+#' @rdname mname
+mname.character <- function(x, conditions = NULL) {
+  
+  mname(get(x), conditions = conditions)
+  
+}
+
+#' @export
+#' @rdname mname
+mname.objfn <- function(x, conditions = NULL) {
+  
+  attr(x, "modelname")
+  
+}
+
+#' @export
+#' @rdname mname
+mname.fn <- function(x, conditions = NULL) {
+  
+  mappings <- attr(x, "mappings")
+  select <- 1:length(mappings)
+  if (!is.null(conditions)) select <- intersect(names(mappings), conditions)
+  modelnames <- Reduce("union",
+                       lapply(mappings[select], function(m) attr(m, "modelname"))
+  )
+  
+  return(modelnames)  
+  
+}
+
+#' @export
+#' @rdname modelname
+#' @param x dMod object for which the model name should be set
+#' @param value character, the new modelname (does not change the C file)
+"modelname<-" <- function(x, ..., value) {
+  UseMethod("modelname<-", x)
+}
+
+#' @export
+#' @rdname modelname
+"modelname<-.fn" <- function(x, conditions = NULL, ..., value) {
+  
+  mappings <- attr(x, "mappings")
+  select <- 1:length(mappings)
+  if (!is.null(conditions)) select <- intersect(names(mappings), conditions)
+  #if (length(value) > 1 && length(value) != length(mappings[select]))
+  #  stop("Length of modelname vector should be either 1 or equal to the number of conditions.")
+  if (length(value) == 1) {
+    value <- rep(value, length.out = length(mappings[select]))
+    if (!is.null(conditions)) names(value) <- conditions
+  }
+    
+  
+  for (i in select) {
+    attr(attr(x, "mappings")[[i]], "modelname") <- value[i]
+    if (inherits(x, "prdfn")) {
+      attr(environment(attr(x, "mappings")[[i]])[["extended"]], "modelname") <- value[i]
+      attr(environment(attr(x, "mappings")[[i]])[["func"]], "modelname") <- value[i]
+    }
+  }
+    
+  
+  return(x)
+  
+}
+
+#' @export
+#' @rdname modelname
+"modelname<-.objfn" <- function(x, conditions = NULL, ..., value) {
+  attr(x, "modelname") <- value
+  return(x)
 }

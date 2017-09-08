@@ -2,30 +2,32 @@
 knitr::opts_chunk$set(echo = TRUE, fig.width = 10, fig.height = 8, warning = FALSE, message = FALSE)
 
 ## ------------------------------------------------------------------------
-library(deSolve)
 library(dMod)
 set.seed(2)
 
 ## ------------------------------------------------------------------------
 # Generate the ODE model
-reactions <- as.eqnlist(read.csv("topology.csv"))
-print(reactions)
+r <- NULL
+r <- addReaction(r, "STAT", "pSTAT", "p1*pEpoR*STAT", "STAT phosphoyrl.")
+r <- addReaction(r, "2*pSTAT", "pSTATdimer", "p2*pSTAT^2", "pSTAT dimerization")
+r <- addReaction(r, "pSTATdimer", "npSTATdimer", "p3*pSTATdimer", "pSTAT dimer import")
+r <- addReaction(r, "npSTATdimer", "2*nSTAT", "p4*npSTATdimer", "dimer dissociation")
+r <- addReaction(r, "nSTAT", "STAT", "p5*nSTAT", "nuclear export")
+
+print(r)
 
 ## ------------------------------------------------------------------------
 # Parameterize the receptor phosphorylation
 receptor <- "pEpoR*((1 - exp(-time*lambda1))*exp(-time*lambda2))^3" 
-reactions$rates <- replaceSymbols(
+r$rates <- replaceSymbols(
   what = "pEpoR", 
   by = receptor,
-  x = reactions$rates
+  x = r$rates
 )
 
 ## ------------------------------------------------------------------------
-# Define parameters that are not estimated
-fixed.zero <- setdiff(reactions$states, "STAT") 
 # Generate odemodel
-model0 <- odemodel(reactions,  fixed = fixed.zero, 
-                   modelname = "jak-stat", compile = TRUE)
+model0 <- odemodel(r, modelname = "jakstat", compile = TRUE)
 
 ## ---- fig.width = 6, fig.height = 4--------------------------------------
 # Generate a prediction function
@@ -49,26 +51,25 @@ observables <- eqnvec(
 
 # Define the observation function. Information about states and dynamic parameters
 # is contained in reactions
-g <- Y(observables, reactions, modelname = "obsfn", compile = TRUE, attach.input = FALSE)
+g <- Y(observables, r, modelname = "obsfn", compile = TRUE, attach.input = FALSE)
 
 ## ---- fig.width = 6, fig.height = 2.5------------------------------------
 # Make a prediction of the observables based on random parameter values
-parameters <- union(getParameters(x), getParameters(g))
+parameters <- getParameters(x, g)
 pars <- structure(runif(length(parameters), 0, 1), names = parameters)
 times <- seq(0, 10, len = 100)
 prediction <- (g*x)(times, pars)
 plot(prediction)
 
 ## ------------------------------------------------------------------------
+innerpars <- getParameters(x, g)
+
 # Start with the identity transformation
-innerpars <- union(attr(x, "parameters"), attr(g, "parameters"))
-trafo <- as.eqnvec(innerpars, names = innerpars)
-
+trafo <- repar("x~x", x = innerpars)
 # Fix some initial values
-trafo[fixed.zero] <- "0"
-
+trafo <- repar("x~0", x = c("pSTAT", "pSTATdimer", "npSTATdimer", "nSTAT"), trafo)
 # Log-transform
-trafo <- replaceSymbols(innerpars, paste0("exp(", innerpars, ")"), trafo)
+trafo <- repar("x~exp(x)", x = innerpars, trafo)
 
 # Generate the parameter transformation function
 p <- P(trafo, condition = "Epo")
@@ -91,8 +92,8 @@ prediction <- (g*x*p)(times, pars)
 plot(prediction)
 
 ## ---- fig.width = 6, fig.height = 2--------------------------------------
-datasheet <- read.csv("pnas_data_original.csv")
-data <- as.datalist(datasheet, split.by = "condition")
+data(jakstat)
+data <- as.datalist(jakstat, split.by = "condition")
 plot(data)
 
 ## ------------------------------------------------------------------------
@@ -112,17 +113,28 @@ plot((g*x*p)(times, myfit$argument, fixed = fixed), data)
 
 ## ---- fig.width = 5, fig.height = 4--------------------------------------
 
-set.seed(1)
 fitlist <- mstrust(obj + constr, center = myfit$argument, fits = 20, cores = 1, sd = 1, samplefun = "rnorm", fixed = fixed, conditions = "Epo")
 pars <- as.parframe(fitlist)
 plotValues(subset(pars, converged))
 plotPars(subset(pars, converged))
 
 
-## ---- fig.width = 6, fig.height = 5--------------------------------------
+## ---- fig.width = 10, fig.height = 3.5-----------------------------------
 
 controls(g, NULL, "attach.input") <- TRUE
-plotArray(subset(pars, converged), g*x*p, 0:60, data, !grepl("prediction", name), fixed = fixed)
+prediction <- predict(g*x*p, 
+                      times = 0:60, 
+                      pars = subset(pars, converged), 
+                      data = data, 
+                      fixed = c(multiple = 2))
+
+library(ggplot2)
+ggplot(prediction, aes(x = time, y = value, color = .value, group = .value)) +
+  facet_grid(condition~name, scales = "free") +
+  geom_line() + 
+  geom_point(data = attr(prediction, "data")) +
+  theme_dMod()
+
 
 
 ## ---- fig.width = 4, fig.height = 3--------------------------------------

@@ -28,7 +28,7 @@ as.datalist.data.frame <- function(x, split.by = NULL, ...) {
   
  
   conditions <- lapply(split.by, function(n) dataframe[, n])
-  splits <- do.call(interaction, c(conditions, list(sep = "_")))
+  splits <- do.call(paste, c(conditions, list(sep = "_")))
   
   # condition grid
   conditionframe <- dataframe[!duplicated(splits), split.by, drop = FALSE]
@@ -37,7 +37,8 @@ as.datalist.data.frame <- function(x, split.by = NULL, ...) {
   
   # data list output
   dataframe <- cbind(data.frame(condition = splits), dataframe[, standard.names])
-  out <- lapply(unique(splits), function(s) subset(dataframe, dataframe[, 1] == s)[, -1])
+  out <- lapply(unique(splits), function(s) dataframe[dataframe[, 1] == s, -1])
+  
   names(out) <- as.character(unique(splits))
   
   out <- as.datalist(out)
@@ -129,5 +130,27 @@ plot.datalist <- function(x, ..., scales = "free", facet = "wrap") {
   data <- x
   if (is.null(names(data))) names(data) <- paste0("C", 1:length(data))
   plotCombined(prediction = NULL, data = data, ..., scales = scales, facet = facet)
+  
+}
+
+#' Coerce to a Data Frame
+#' 
+#' @param x any R object
+#' @return a data frame
+#' @rdname as.data.frame.dMod
+#' @export
+as.data.frame.datalist <- function(x, ...) {
+  
+  data <- x
+  condition.grid <- attr(x, "condition.grid")
+  
+  data <- lbind(data)
+  if (!is.null(condition.grid)) {
+    for (C in colnames(condition.grid)) {
+      data[, C] <- condition.grid[as.character(data$condition), C]
+    }
+  }
+  
+  return(data)
   
 }

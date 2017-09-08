@@ -4,7 +4,7 @@
 \alias{wide2long}
 \title{Translate wide output format (e.g. from ode) into long format}
 \usage{
-wide2long(out, keep, na.rm)
+wide2long(out, keep = 1, na.rm = FALSE)
 }
 \arguments{
 \item{out}{data.frame or matrix or list of matrices in wide format}

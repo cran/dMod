@@ -460,7 +460,7 @@ subset.eqnlist <- function(x, ...) {
   
   # volumes
   volumes <- eqnlist$volumes
-  if(!is.null(volumes)) volumes <- volumes[names(volumes) %in% states]
+  if(!is.null(volumes)) volumes <- volumes[intersect(names(volumes),  states)]
   
   # description
   description <- eqnlist$description[select]
@@ -743,8 +743,9 @@ c.eqnvec <- function(...) {
 #' named character vector with the algebraic expressions
 #' @param variables character vector, the symbols that should be treated as variables
 #' @param parameters character vector, the symbols that should be treated as parameters
-#' @param compile Logical. The function is either translated into a C file to be compiled or is
-#' evaluated in raw R.
+#' @param compile Logical. Directly compile the file. If \code{FALSE} and modelname is available,
+#' the C file is written but not compiled. If modelname is not available, an R function is
+#' generated and returned.
 #' @param modelname file name of the generated C file.
 #' @param verbose Print compiler output to R command line.
 #' @param convenient logical, if TRUE return a function with argument \code{...} to pass
@@ -759,6 +760,7 @@ c.eqnvec <- function(...) {
 #' The argument \code{attach.input} determines whether \code{M} is attached to the output.
 #' The function \code{f} returns a matrix.
 #' @examples 
+#' library(ggplot2)
 #' myfun <- funC0(c(y = "a*x^4 + b*x^2 + c"))
 #' out <- myfun(a = -1, b = 2, c = 3, x = seq(-2, 2, .1), attach.input = TRUE)
 #' qplot(x = x, y = y, data = as.data.frame(out), geom = "line")
@@ -770,6 +772,8 @@ funC0 <- function(x, variables = getSymbols(x, exclude = parameters),
   # Get symbols to be substituted by x[] and y[]
   outnames <- names(x)
   innames <- variables
+  
+  if (is.null(modelname)) outputC <- FALSE else outputC <- TRUE
   
   # Function to check arguments
   checkArguments <- function(M, p) {
@@ -806,10 +810,11 @@ funC0 <- function(x, variables = getSymbols(x, exclude = parameters),
   
   ## Compiled version based on inline package
   ## Non-compiled version based on with() and eval()
-  if (compile) {
+  if (outputC) {
     
     # Do the replacement to obtain C syntax
     x <- replaceOperation("^", "pow", x)
+    x <- replaceOperation("**", "pow", x)
     if (!is.null(innames))
       x <- replaceSymbols(innames, paste0("x[", (1:length(innames)) - 1, "+i**k]"), x)
     if (!is.null(parameters))
@@ -824,8 +829,10 @@ funC0 <- function(x, variables = getSymbols(x, exclude = parameters),
     # Put equation into C function
     if (is.null(modelname)) {
       funcname <- paste0("funC0_", paste(sample(c(0:9, letters), 8, replace = TRUE), collapse = ""))
+      filename <- funcname
     } else {
-      funcname <- modelname
+      funcname <- paste0(modelname, "_", paste(sample(c(0:9, letters), 8, replace = TRUE), collapse = ""))
+      filename <- modelname
     }
     body <- paste(
       "#include <R.h>\n", 
@@ -836,16 +843,24 @@ funC0 <- function(x, variables = getSymbols(x, exclude = parameters),
       "\n}\n}"
     )
     
-    filename <- paste(funcname, "c", sep = ".")
-    sink(file = filename)
+    sink(file = paste(filename, "c", sep = "."))
     cat(body)
     sink()
-    shlibOut <- system(paste0(R.home(component = "bin"), "/R CMD SHLIB ", filename), intern = TRUE)
-    if (verbose) {
-      cat(shlibOut)
+    
+    
+    # Compile and load if requested
+    if (compile) {
+      
+      shlibOut <- system(paste0(R.home(component = "bin"), "/R CMD SHLIB ", paste(filename, "c", sep = ".")), intern = TRUE)
+      if (verbose) {
+        cat(shlibOut)
+      }
+      
+      .so <- .Platform$dynlib.ext
+      test <- try(dyn.unload(paste0(filename, .so)), silent = TRUE)
+      if (!inherits(test, "try-error")) message(paste("A shared object with name", filename, "was overloaded."))
+      dyn.load(paste0(filename, .so))
     }
-    .so <- .Platform$dynlib.ext
-    dyn.load(paste0(funcname, .so))
     
     # Generate output function for compiled version
     myRfun <- function(M = NULL, p = NULL, attach.input = FALSE) {
@@ -865,7 +880,10 @@ funC0 <- function(x, variables = getSymbols(x, exclude = parameters),
       y <- double(l*n)
       
       # Evaluate C function and write into matrix
-      loadDLL(func = funcname, cfunction = funcname)
+      # loadDLL costs time. Probably, the check is not necessary because
+      # each time, funC0 is called, the C function being generated has
+      # or should have another name.
+      # loadDLL(func = funcname, cfunction = funcname)
       out <- matrix(.C(funcname, x = x, y = y, p = p, n = n, k = k, l = l)$y, nrow = length(outnames), ncol = n)
       rownames(out) <- outnames
       
@@ -905,7 +923,9 @@ funC0 <- function(x, variables = getSymbols(x, exclude = parameters),
       # Initialize output
       out.list <- as.list(rep(0, ntot))
       out.list[nonempty] <- with(x, eval(x.expr))
-      out.list <- lapply(out.list, function(o) matrix(o, ncol = 1, nrow = ncol(M)))
+      ncol.M <- ncol(M)
+      mat <- matrix(0, ncol = 1, nrow = ncol(M))
+      out.list <- lapply(out.list, function(o) {mat[,1] <- o; return(mat)})
       out.matrix <- do.call(cbind, out.list)
       colnames(out.matrix) <- outnames
       rownames(out.matrix) <- NULL
