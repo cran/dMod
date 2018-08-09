@@ -187,6 +187,9 @@ getReactions <- function(eqnlist) {
 #' @rdname addReaction
 addReaction <- function(eqnlist, from, to, rate, description = names(rate)) {
   
+  
+  if (missing(eqnlist)) eqnlist <- eqnlist()
+  
   volumes <- eqnlist$volumes
   
   # Analyze the reaction character expressions
@@ -744,9 +747,10 @@ c.eqnvec <- function(...) {
 #' @param variables character vector, the symbols that should be treated as variables
 #' @param parameters character vector, the symbols that should be treated as parameters
 #' @param compile Logical. Directly compile the file. If \code{FALSE} and modelname is available,
-#' the C file is written but not compiled. If modelname is not available, an R function is
-#' generated and returned.
-#' @param modelname file name of the generated C file.
+#' the C file is written but not compiled. In this case, \link{compile} has to be called separately
+#' to compile one or more .c-files into one .so-file. 
+#' If modelname is not available, an R function is generated and returned.
+#' @param modelname file name of the generated C file. See description of parameter \code{compile}.
 #' @param verbose Print compiler output to R command line.
 #' @param convenient logical, if TRUE return a function with argument \code{...} to pass
 #' all variables/parameters as named arguments
@@ -759,6 +763,7 @@ c.eqnvec <- function(...) {
 #' parameter values.
 #' The argument \code{attach.input} determines whether \code{M} is attached to the output.
 #' The function \code{f} returns a matrix.
+#' @importFrom digest digest
 #' @examples 
 #' library(ggplot2)
 #' myfun <- funC0(c(y = "a*x^4 + b*x^2 + c"))
@@ -812,13 +817,22 @@ funC0 <- function(x, variables = getSymbols(x, exclude = parameters),
   ## Non-compiled version based on with() and eval()
   if (outputC) {
     
+    
     # Do the replacement to obtain C syntax
+    x <- replaceNumbers(x)
     x <- replaceOperation("^", "pow", x)
     x <- replaceOperation("**", "pow", x)
-    if (!is.null(innames))
-      x <- replaceSymbols(innames, paste0("x[", (1:length(innames)) - 1, "+i**k]"), x)
-    if (!is.null(parameters))
-      x <- replaceSymbols(parameters, paste0("p[", (1:length(parameters)) - 1, "]"), x)
+    what <- NULL
+    by <- NULL
+    if ( (!is.null(innames)) & length(innames) != 0) {
+      what <- c(what, innames)
+      by <- c(by, paste0("x[", seq_along(innames) - 1, "+i**k]"))
+    }
+    if ( (!is.null(parameters)) & length(parameters) != 0) {
+      what <- c(what, parameters)
+      by <- c(by, paste0("p[", seq_along(parameters) - 1, "]"))
+    }
+    x <- replaceSymbols(what, by, x)
     names(x) <- paste0("y[", (1:length(outnames)) - 1, "+i**l]")
     
     
@@ -828,10 +842,10 @@ funC0 <- function(x, variables = getSymbols(x, exclude = parameters),
     
     # Put equation into C function
     if (is.null(modelname)) {
-      funcname <- paste0("funC0_", paste(sample(c(0:9, letters), 8, replace = TRUE), collapse = ""))
+      funcname <- paste0("funC0_", substr(digest(expr),1,8))
       filename <- funcname
     } else {
-      funcname <- paste0(modelname, "_", paste(sample(c(0:9, letters), 8, replace = TRUE), collapse = ""))
+      funcname <- paste0(modelname, "_", substr(digest(expr),1,8))
       filename <- modelname
     }
     body <- paste(
@@ -843,6 +857,12 @@ funC0 <- function(x, variables = getSymbols(x, exclude = parameters),
       "\n}\n}"
     )
     
+    # First unload possible loaded DLL before writing C file (otherwise we have problems on Windows)
+    .so <- .Platform$dynlib.ext
+    test <- try(dyn.unload(paste0(filename, .so)), silent = TRUE)
+    if (!inherits(test, "try-error")) message(paste("A shared object with name", filename, "already existed and was overwritten."))
+    
+    # Write C file
     sink(file = paste(filename, "c", sep = "."))
     cat(body)
     sink()
@@ -856,9 +876,6 @@ funC0 <- function(x, variables = getSymbols(x, exclude = parameters),
         cat(shlibOut)
       }
       
-      .so <- .Platform$dynlib.ext
-      test <- try(dyn.unload(paste0(filename, .so)), silent = TRUE)
-      if (!inherits(test, "try-error")) message(paste("A shared object with name", filename, "was overloaded."))
       dyn.load(paste0(filename, .so))
     }
     
@@ -886,6 +903,9 @@ funC0 <- function(x, variables = getSymbols(x, exclude = parameters),
       # loadDLL(func = funcname, cfunction = funcname)
       out <- matrix(.C(funcname, x = x, y = y, p = p, n = n, k = k, l = l)$y, nrow = length(outnames), ncol = n)
       rownames(out) <- outnames
+      
+      # Make sure that output does not containt NaN
+      ## out[is.nan(out)] <- 0
       
       if (attach.input)
         out <- rbind(M, out)
@@ -932,6 +952,10 @@ funC0 <- function(x, variables = getSymbols(x, exclude = parameters),
       
       if (attach.input)
         out.matrix <- cbind(t(M), out.matrix)
+      
+      # Make sure that output does not containt NaN
+      # out.matrix[is.nan(out.matrix)] <- 0
+      
       
       return(out.matrix)
       

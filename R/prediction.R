@@ -9,10 +9,8 @@
 #' @param events data.frame of events with columns "var" (character, the name of the state to be
 #' affected), "time" (numeric, time point), "value" (numeric, value), "method" (character, either
 #' "replace", "add" or "multiply"). See \link[deSolve]{events}.
-#' Within \code{Xs()} a \code{data.frame} of additional events is generated to 
-#' reset the sensitivities appropriately, depending on the event method. 
-#' ATTENTION: The addional events are not dynamically recalculated. If you call the prediction
-#' function with alternative events, the prediction is fine but the sensitivities can be wrong.
+#' ATTENTION: Sensitivities for event states will only be correctly computed if defined within
+#' \code{\link{odemodel}()}. Specify events within \code{Xs()} only for forward simulation.
 #' @param names character vector with the states to be returned. If NULL, all states are returned.
 #' @param condition either NULL (generic prediction for any condition) or a character, denoting
 #' the condition for which the function makes a prediction.
@@ -23,7 +21,6 @@
 #' and the sensitivities of the ODE are multiplied according to the chain rule for
 #' differentiation. The result is saved in the attributed "deriv", 
 #' i.e. in this case the attibutes "deriv" and "sensitivities" do not coincide. 
-#' @example inst/examples/test_blocks.R
 #' @export
 #' @import deSolve
 Xs <- function(odemodel, forcings=NULL, events=NULL, names = NULL, condition = NULL, optionsOde=list(method = "lsoda"), optionsSens=list(method = "lsodes")) {
@@ -34,6 +31,12 @@ Xs <- function(odemodel, forcings=NULL, events=NULL, names = NULL, condition = N
   
   myforcings <- forcings
   myevents <- events
+  if (!is.null(attr(func, "events")) & !is.null(myevents))
+    warning("Events already defined in odemodel. Additional events in Xs() will be ignored. Events need to be defined in either odemodel() or Xs().")
+  if (is.null(attr(func, "events")) & !is.null(myevents))
+    message("Events should be definend in odemodel(). If defined in Xs(), events will be applied, but sensitivities will not be reset accordingly.")
+  
+  
   
   # Variable and parameter names
   variables <- attr(func, "variables")
@@ -52,28 +55,6 @@ Xs <- function(odemodel, forcings=NULL, events=NULL, names = NULL, condition = N
   yiniSens <- as.numeric(senssplit.1 == senssplit.2)
   names(yiniSens) <- sensvar
   
-  #Additional events for resetting the sensitivities when events are supplied
-  myevents.addon <- NULL
-  if(!is.null(myevents)) {
-    myevents.addon <- lapply(1:nrow(myevents), function(i) {
-      newevent <- with(myevents[i, ], {
-        newvar <- sensvar[senssplit.1 == var]
-        newtime <- time
-        newvalue <- switch(as.character(method), replace = 0, add = 0, multiply = value)
-        newmethod <- method
-        if(length(newvar) > 0 && method != "add") {
-          data.frame(var = newvar, time = newtime, value = newvalue, method = newmethod)
-        } else {
-          NULL
-        }
-      })
-      
-      return(newevent)
-      
-    })
-    myevents.addon <- do.call(rbind, myevents.addon)
-  }
-  
   # Names for deriv output
   sensGrid <- expand.grid(variables, c(svariables, sparameters), stringsAsFactors=FALSE)
   sensNames <- paste(sensGrid[,1], sensGrid[,2], sep=".")  
@@ -86,12 +67,12 @@ Xs <- function(odemodel, forcings=NULL, events=NULL, names = NULL, condition = N
   sensNames <- paste(sensGrid[,1][select], sensGrid[,2][select], sep = ".")  
   
   
+  
   # Controls to be modified from outside
   controls <- list(
     forcings = myforcings,
     events = myevents,
     names = names,
-    events.addon = myevents.addon,
     optionsOde = optionsOde,
     optionsSens = optionsSens
   )
@@ -102,13 +83,11 @@ Xs <- function(odemodel, forcings=NULL, events=NULL, names = NULL, condition = N
     yini <- unclass(pars)[variables]
     mypars <- unclass(pars)[parameters]
     
-    events <- controls$events
     forcings <- controls$forcings
-    myevents.addon <- controls$events.addon
+    events <- controls$events
     optionsOde <- controls$optionsOde
     optionsSens <- controls$optionsSens
     names <- controls$names
-    events.extended <- rbind(events, myevents.addon)
     
     # Add event time points (required by integrator) 
     event.times <- unique(events$time)
@@ -116,8 +95,7 @@ Xs <- function(odemodel, forcings=NULL, events=NULL, names = NULL, condition = N
     
     # Sort event time points
     if (!is.null(events)) events <- events[order(events$time),]
-    if (!is.null(events.extended)) events.extended <- events.extended[order(events.extended$time),]
-    
+
     
     myderivs <- NULL
     mysensitivities <- NULL
@@ -126,7 +104,7 @@ Xs <- function(odemodel, forcings=NULL, events=NULL, names = NULL, condition = N
       # Evaluate model without sensitivities
       # loadDLL(func)
       if (!is.null(forcings)) forc <- setForcings(func, forcings) else forc <- NULL
-      out <- do.call(odeC, c(list(y = unclass(yini), times = times, func = func, parms = mypars, forcings = forc, events = list(data = events)), optionsOde))
+      out <- suppressWarnings(do.call(odeC, c(list(y = unclass(yini), times = times, func = func, parms = mypars, forcings = forc, events = list(data = events)), optionsOde)))
       out <- submatrix(out, cols = c("time", names))
       #out <- cbind(out, out.inputs)
       
@@ -137,9 +115,9 @@ Xs <- function(odemodel, forcings=NULL, events=NULL, names = NULL, condition = N
       # loadDLL(extended)
       if (!is.null(forcings)) forc <- setForcings(extended, forcings) else forc <- NULL
       
-      outSens <- do.call(odeC, c(list(y = c(unclass(yini), yiniSens), times = times, func = extended, parms = mypars, 
+      outSens <- suppressWarnings(do.call(odeC, c(list(y = c(unclass(yini), yiniSens), times = times, func = extended, parms = mypars, 
                                       forcings = forc, 
-                                      events = list(data = events.extended)), optionsSens))
+                                      events = list(data = events)), optionsSens)))
       #out <- cbind(outSens[,c("time", variables)], out.inputs)
       out <- submatrix(outSens, cols = c("time", names))
       mysensitivities <- submatrix(outSens, cols = !colnames(outSens) %in% c(variables, forcnames))
@@ -395,6 +373,7 @@ Xd <- function(data, condition = NULL) {
 #' the condition for which the function makes a prediction.
 #' @param attach.input logical, indiating whether the original input should be
 #' returned with the output.
+#' @param deriv logical, generate function to evaluate derivatives of observables. Necessary for parameter estimation.
 #' @param compile Logical, compile the function (see \link{funC0})
 #' @param modelname Character, used if \code{compile = TRUE}, sets a fixed filename for the
 #' C file.
@@ -410,9 +389,10 @@ Xd <- function(data, condition = NULL) {
 #' the Jacobian 
 #' of the parameter transformation and the sensitivities of the observation function
 #' are multiplied according to the chain rule for differentiation.
+#' @importFrom digest digest
 #' @example inst/examples/prediction.R
 #' @export
-Y <- function(g, f = NULL, states = NULL, parameters = NULL, condition = NULL, attach.input = TRUE, compile = FALSE, modelname = NULL, verbose = FALSE) {
+Y <- function(g, f = NULL, states = NULL, parameters = NULL, condition = NULL, attach.input = TRUE, deriv = TRUE, compile = FALSE, modelname = NULL, verbose = FALSE) {
  
   
   # Idea: 
@@ -432,26 +412,53 @@ Y <- function(g, f = NULL, states = NULL, parameters = NULL, condition = NULL, a
   # Modify modelname by condition
   if (!is.null(modelname) && !is.null(condition)) modelname <- paste(modelname, sanitizeConditions(condition), sep = "_")
   
+  # Add hash to modelname to prevent overwriting .c-files with different content
+  if (!is.null(modelname)) modelname <- paste0(modelname, "_", substr(digest(list(g,f,states,parameters,condition,attach.input,deriv)),1,8))
+  
   # Then add suffix(es) for derivative function
   if (!is.null(modelname)) modelname_deriv <- paste(modelname, "deriv", sep = "_")
   
   # Get potential paramters from g, forcings are treated as parameters because
   # sensitivities dx/dp with respect to forcings are zero.
+  # Distinguish between
+  # symbols = any symbol that occurrs in g
+  # states = states of the underlying prediction function
+  # parameters = parameters of the underlying prediction function
+  # estimate = parameters p for which derivatives should be returned and states x assumed to provide derivatives, dx/dp
+  symbols <- getSymbols(unclass(g))
   if (is.null(f)) {
     states <- union(states, "time")
-    parameters <- parameters
+    estimate <- union(states, parameters)
+    parameters <- union(parameters, setdiff(symbols, c(states, "time")))
   } else if (inherits(f, "fn")) {
-    states <- union(names(attr(attr(f, "mappings")[[1]], "equations")), "time")
-    parameters <- setdiff(union(getParameters(f), getSymbols(unclass(g))), states)
+    mystates <- union(names(attr(attr(f, "mappings")[[1]], "equations")), "time")
+    myparameters <- setdiff(union(getParameters(f), getSymbols(unclass(g))), mystates)
+    estimate <- c(states, parameters)
+    if (is.null(states)) estimate <- c(estimate, mystates)
+    if (is.null(parameters)) estimate <- c(estimate, myparameters)
+    states <- union(mystates, states)
+    parameters <- union(myparameters, parameters)
   } else {
+    # Get all states and parameters from f
     f <- as.eqnvec(f)
-    if (is.null(states)) states <- union(names(f), "time")
-    if (is.null(parameters)) parameters <- getSymbols(c(unclass(g), unclass(f)), exclude = c(states, "time"))
+    mystates <- union(names(f), "time")
+    myparameters <- getSymbols(c(unclass(g), unclass(f)), exclude = mystates)
+    # Set states and parameters to be estimated according to arguments, and
+    # take values from mystates and myparameters, if NULL
+    estimate <- c(states, parameters)
+    if (is.null(states)) estimate <- c(estimate, mystates)
+    if (is.null(parameters)) estimate <- c(estimate, myparameters)
+    # Return states and parameters according to what is found in the equations and what is supplied by the user (probably not needed)
+    states <- union(mystates, states)
+    parameters <- union(myparameters, parameters)
   }
-  variables.deriv <- c(
-    states, 
-    as.vector(outer(states, c(states, parameters), paste, sep = "."))
-  )
+
+  # cat("States:\n")
+  # print(states)
+  # cat("Parameters:\n")
+  # print(parameters)
+  # cat("Estimate:\n")
+  # print(estimate)
   
   # Observables defined by g
   observables <- names(g)
@@ -459,29 +466,40 @@ Y <- function(g, f = NULL, states = NULL, parameters = NULL, condition = NULL, a
   gEval <- funC0(g, variables = states, parameters = parameters, compile = compile, modelname = modelname, 
                  verbose = verbose, convenient = FALSE, warnings = FALSE)
   
-  # Character matrices of derivatives
-  dxdp <- dgdx <- dgdp <- NULL
-  
-  if (length(states) > 0 & length(parameters) > 0) {
-    dxdp <- apply(expand.grid.alt(states, c(states, parameters)), 1, paste, collapse = ".")
-    dxdp <- matrix(dxdp, nrow = length(states))
-  }
-  if (length(states) > 0)
-    dgdx <- matrix(jacobianSymb(g, states), nrow = length(g))
-  if (length(parameters) > 0) {
-    dgdp <- cbind(
-      matrix("0", nrow = length(g), ncol = length(states)), 
-      matrix(jacobianSymb(g, parameters), nrow = length(g))
+  # Produce everything that is needed for derivatives
+  if (deriv) {
+    # Character matrices of derivatives
+    dxdp <- dgdx <- dgdp <- NULL    
+    states.est <- intersect(states, estimate)
+    pars.est <- intersect(parameters, estimate)
+    
+    variables.deriv <- c(
+      states, 
+      as.vector(outer(states.est, c(states.est, pars.est), paste, sep = "."))
     )
+    
+    if (length(states.est) > 0 & length(pars.est) > 0) {
+      dxdp <- apply(expand.grid.alt(states.est, c(states.est, pars.est)), 1, paste, collapse = ".")
+      dxdp <- matrix(dxdp, nrow = length(states.est))
+    }
+    if (length(states.est) > 0)
+      dgdx <- matrix(jacobianSymb(g, states.est), nrow = length(g))
+    if (length(pars.est) > 0) {
+      dgdp <- cbind(
+        matrix("0", nrow = length(g), ncol = length(states.est)), 
+        matrix(jacobianSymb(g, pars.est), nrow = length(g))
+      )
+    }
+    
+    # Sensitivities of the observables
+    derivs <- as.vector(sumSymb(prodSymb(dgdx, dxdp), dgdp))
+    if (length(derivs) == 0) stop("Neither states nor parameters involved. Use Y() with argument 'deriv = FALSE' instead.")
+    names(derivs) <- apply(expand.grid.alt(observables, c(states.est, pars.est)), 1, paste, collapse = ".")
+    
+    derivsEval <- funC0(derivs, variables = variables.deriv, parameters = parameters, compile = compile, modelname = modelname_deriv,
+                        verbose = verbose, convenient = FALSE, warnings = FALSE)
+    
   }
-  
-  # Sensitivities of the observables
-  derivs <- as.vector(sumSymb(prodSymb(dgdx, dxdp), dgdp))
-  if (length(derivs) == 0) stop("Neither states nor parameters involved")
-  names(derivs) <- apply(expand.grid.alt(observables, c(states, parameters)), 1, paste, collapse = ".")
-
-  derivsEval <- funC0(derivs, variables = variables.deriv, parameters = parameters, compile = compile, modelname = modelname_deriv,
-                      verbose = verbose, convenient = FALSE, warnings = FALSE)
   
   # Vector with zeros for possibly missing derivatives
   # zeros <- rep(0, length(dxdp))
@@ -499,8 +517,10 @@ Y <- function(g, f = NULL, states = NULL, parameters = NULL, condition = NULL, a
     values <- gEval(M = out, p = pars)
     
     sensitivities.export <- NULL
+    myderivs <- NULL
+    
     dout <- attr(out, "sensitivities")
-    if (!is.null(dout)) {
+    if (!is.null(dout) & deriv) {
       dvalues <- derivsEval(M = cbind(out, dout), p = pars)
       sensitivities.export <- cbind(time = out[, 1], dvalues)
     }
@@ -508,9 +528,9 @@ Y <- function(g, f = NULL, states = NULL, parameters = NULL, condition = NULL, a
     
     # Parameter transformation
     dP <- attr(pars, "deriv")
-    if (!is.null(dP) & !is.null(dout)) {
+    if (!is.null(dP) & !is.null(dout) & deriv) {
       
-      parameters.all <- c(states, parameters)
+      parameters.all <- c(states.est, pars.est)
       parameters.missing <- parameters.all[!parameters.all %in% rownames(dP)]
       
       if (length(parameters.missing) > 0 & warnings)
@@ -540,11 +560,11 @@ Y <- function(g, f = NULL, states = NULL, parameters = NULL, condition = NULL, a
     
     
     myderivs <- myparameters <- NULL
-    if (!is.null(dout) && !attach.input) {
+    if (!is.null(dout) & deriv & !attach.input) {
       myderivs <- cbind(time = out[,"time"], dvalues)
       if (is.null(dP)) myparameters <- names(pars) else myparameters <- colnames(dP)
     }
-    if (!is.null(dout) && attach.input) {
+    if (!is.null(dout) & deriv & attach.input) {
       myderivs <- cbind(time = out[,"time"], dvalues, submatrix(attr(out, "deriv"), cols = -1))
       if (is.null(dP)) myparameters <- names(pars) else myparameters <- colnames(dP)
     }
@@ -612,3 +632,22 @@ Xt <- function(condition = NULL) {
 }
 
 
+
+#' An identity function which vanishes upon concatenation of fns
+#'
+#' @return fn of class idfn
+#' @export
+#'
+#' @examples
+#' x <- Xt()
+#' id <- Id()
+#'
+#' (id*x)(1:10, pars = c(a = 1))
+#' (x*id)(1:10, pars = c(a = 1))
+#' str(id*x)
+#' str(x*id)
+Id <- function() {
+  outfn <- function() return(NULL)
+  class(outfn) <- c("idfn", "fn")
+  return(outfn)
+}

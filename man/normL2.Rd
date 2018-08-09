@@ -4,14 +4,15 @@
 \alias{normL2}
 \title{L2 norm between data and model prediction}
 \usage{
-normL2(data, x, errmodel = NULL, times = NULL, attr.name = "data")
+normL2(data, x, errmodel = NULL, times = NULL, attr.name = "data",
+  loq = -Inf)
 }
 \arguments{
 \item{data}{object of class \link{datalist}}
 
 \item{x}{object of class \link{prdfn}}
 
-\item{errmodel}{object of class \link{obsfn}}
+\item{errmodel}{object of class \link{obsfn}. \code{errmodel} does not need to be defined for all conditions.}
 
 \item{times}{numeric vector, additional time points where the prediction function is 
 evaluated. If NULL, time points are extacted from the datalist solely. If the prediction
@@ -19,6 +20,8 @@ function makes use of events, hand over event \code{times} here.}
 
 \item{attr.name}{character. The constraint value is additionally returned in an 
 attributed with this name}
+
+\item{loq}{named numeric or single valued numeric. Limit of quantification.}
 }
 \value{
 Object of class \code{obsfn}, i.e. a function 
@@ -57,4 +60,3 @@ obj <- normL2(data, x)
 myfit <- trust(obj, pars, rinit = 1, rmax = 10)
 plot(x(times, myfit$argument), data)
 }
-

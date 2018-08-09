@@ -4,8 +4,8 @@
 \alias{mname}
 \alias{mname.NULL}
 \alias{mname.character}
-\alias{mname.fn}
 \alias{mname.objfn}
+\alias{mname.fn}
 \title{Get modelname from single object (used internally)}
 \usage{
 mname(x, conditions = NULL)
@@ -26,4 +26,3 @@ mname(x, conditions = NULL)
 \description{
 Get modelname from single object (used internally)
 }
-

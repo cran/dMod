@@ -37,4 +37,3 @@ Plot residuals for a fitlist
  plotResiduals(myfitlist, g*x*p, data,  c("condition","name","index"))
 }
 }
-

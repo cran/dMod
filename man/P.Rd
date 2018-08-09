@@ -9,7 +9,9 @@ P(trafo = NULL, parameters = NULL, condition = NULL,
   modelname = NULL, method = c("explicit", "implicit"), verbose = FALSE)
 }
 \arguments{
-\item{trafo}{object of class \code{eqnvec} or named character}
+\item{trafo}{object of class \code{eqnvec} or named character or list thereof. In case,
+trafo is a list, \code{P()} is called on each element and conditions are assumed to be
+the list names.}
 
 \item{parameters}{character vector}
 
@@ -22,9 +24,9 @@ the parameter transformation.}
 evaluation of the parameter transformation function is saved as guess for the next 
 evaluation.}
 
-\item{compile}{logical}
+\item{compile}{logical, compile the function (see \link{funC0})}
 
-\item{modelname}{character}
+\item{modelname}{character, see \link{funC0}}
 
 \item{method}{character, either \code{"explicit"} or \code{"implicit"}}
 
@@ -38,4 +40,3 @@ Generate parameter transformation function from a
 named character vector or object of class \link{eqnvec}. This is a wrapper
 function for \link{Pexpl} and \link{Pimpl}. See for more details there.
 }
-

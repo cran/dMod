@@ -18,4 +18,3 @@ An objective function or objlist object.
 The \code{\%.*\%} operator allows to multiply objects of class objlist or objfn with
 a scalar.
 }
-

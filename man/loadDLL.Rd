@@ -16,4 +16,3 @@ is a wrapper for \code{dyn.load} that uses the "modelname" attribute of
 dMod objects like prediction functions, observation functions, etc. to
 load the corresponding shared object.
 }
-

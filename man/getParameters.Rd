@@ -2,11 +2,12 @@
 % Please edit documentation in R/classes.R
 \name{getParameters}
 \alias{getParameters}
-\alias{getParameters.fn}
 \alias{getParameters.odemodel}
+\alias{getParameters.fn}
 \alias{getParameters.parvec}
 \alias{getParameters.prdframe}
 \alias{getParameters.prdlist}
+\alias{getParameters.eqnlist}
 \title{Extract the parameters of an object}
 \usage{
 getParameters(..., conditions = NULL)
@@ -20,11 +21,13 @@ getParameters(..., conditions = NULL)
 \method{getParameters}{prdframe}(x, conditions = NULL)
 
 \method{getParameters}{prdlist}(x, conditions = NULL)
+
+\method{getParameters}{eqnlist}(x)
 }
 \arguments{
 \item{...}{objects from which the parameters should be extracted}
 
-\item{conditions}{character vector specifying the conditions to 
+\item{conditions}{character vector specifying the conditions to
 which \code{getParameters} is restricted}
 
 \item{x}{object from which the parameters are extracted}
@@ -35,4 +38,3 @@ The parameters in a format that depends on the class of \code{x}.
 \description{
 Extract the parameters of an object
 }
-

@@ -3,27 +3,26 @@ knitr::opts_chunk$set(echo = TRUE, fig.width = 10, fig.height = 8, warning = FAL
 
 ## ------------------------------------------------------------------------
 library(dMod)
+library(dplyr)
 set.seed(2)
 
 ## ------------------------------------------------------------------------
 # Generate the ODE model
-r <- NULL
-r <- addReaction(r, "STAT", "pSTAT", "p1*pEpoR*STAT", "STAT phosphoyrl.")
-r <- addReaction(r, "2*pSTAT", "pSTATdimer", "p2*pSTAT^2", "pSTAT dimerization")
-r <- addReaction(r, "pSTATdimer", "npSTATdimer", "p3*pSTATdimer", "pSTAT dimer import")
-r <- addReaction(r, "npSTATdimer", "2*nSTAT", "p4*npSTATdimer", "dimer dissociation")
-r <- addReaction(r, "nSTAT", "STAT", "p5*nSTAT", "nuclear export")
+r <- eqnlist() %>% 
+  addReaction("STAT"       , "pSTAT"      , "p1*pEpoR*STAT" , "STAT phosphoyrl.") %>%
+  addReaction("2*pSTAT"    , "pSTATdimer" , "p2*pSTAT^2"    , "pSTAT dimerization") %>%
+  addReaction("pSTATdimer" , "npSTATdimer", "p3*pSTATdimer" , "pSTAT dimer import") %>%
+  addReaction("npSTATdimer", "2*nSTAT"    , "p4*npSTATdimer", "dimer dissociation") %>%
+  addReaction("nSTAT"      , "STAT"       , "p5*nSTAT"      , "nuclear export")
 
 print(r)
 
 ## ------------------------------------------------------------------------
 # Parameterize the receptor phosphorylation
-receptor <- "pEpoR*((1 - exp(-time*lambda1))*exp(-time*lambda2))^3" 
-r$rates <- replaceSymbols(
-  what = "pEpoR", 
-  by = receptor,
-  x = r$rates
-)
+receptor <- "((1 - exp(-time*lambda1))*exp(-time*lambda2))^3"
+r$rates <- r$rates %>% 
+  insert("pEpoR ~ pEpoR*rec", rec = receptor)
+
 
 ## ------------------------------------------------------------------------
 # Generate odemodel
@@ -46,7 +45,7 @@ plot(prediction)
 observables <- eqnvec(
   tSTAT = "s_tSTAT*(STAT + pSTAT + 2*pSTATdimer)",
   tpSTAT = "s_tpSTAT*(pSTAT + 2*pSTATdimer) + off_tpSTAT",
-  pEpoR = paste0("s_EpoR *", receptor)
+  pEpoR = paste0("s_EpoR * pEpoR *", receptor)
 )
 
 # Define the observation function. Information about states and dynamic parameters
@@ -62,25 +61,34 @@ prediction <- (g*x)(times, pars)
 plot(prediction)
 
 ## ------------------------------------------------------------------------
-innerpars <- getParameters(x, g)
 
-# Start with the identity transformation
-trafo <- repar("x~x", x = innerpars)
-# Fix some initial values
-trafo <- repar("x~0", x = c("pSTAT", "pSTATdimer", "npSTATdimer", "nSTAT"), trafo)
-# Log-transform
-trafo <- repar("x~exp(x)", x = innerpars, trafo)
+p <- eqnvec() %>% 
+  # Start with the identity transformation
+  define("x~x", x = getParameters(x, g)) %>% 
+  # Fix some initial values
+  define("x~0", x = c("pSTAT", "pSTATdimer", "npSTATdimer", "nSTAT")) %>% 
+  # Log-transform all current symbols found in the equations
+  insert("x~exp(x)", x = .currentSymbols) %>% 
+  # Generate parameter transformation function
+  P(condition = "Epo")
 
-# Generate the parameter transformation function
-p <- P(trafo, condition = "Epo")
+print(getEquations(p))
+
 
 
 ## ------------------------------------------------------------------------
-# Modify rate p1 
-trafo["pEpoR"] <- paste("multiple *", trafo["pEpoR"])
 
-# Add new parameter transformation function to the existing one
-p <- p + P(trafo, condition = "Epo prediction")
+# Add another parameter transformation
+p <- p +
+  # Start with the current transformation
+  getEquations(p, conditions = "Epo") %>%
+  # Insert multiple of pEpoR everywhere where we finde pEpoR
+  define("pEpoR ~ multiple*exp(pEpoR)") %>% 
+  # Generate parameter transformation function with another condition name
+  P(condition = "Epo prediction")
+
+print(getEquations(p))
+
 
 ## ---- fig.width = 6, fig.height = 2.5------------------------------------
 # Make a prediction of the observables based on random parameter values
@@ -113,10 +121,16 @@ plot((g*x*p)(times, myfit$argument, fixed = fixed), data)
 
 ## ---- fig.width = 5, fig.height = 4--------------------------------------
 
-fitlist <- mstrust(obj + constr, center = myfit$argument, fits = 20, cores = 1, sd = 1, samplefun = "rnorm", fixed = fixed, conditions = "Epo")
+fitlist <- mstrust(obj + constr, 
+                   center = myfit$argument, 
+                   fits = 20, 
+                   cores = 1, 
+                   sd = 2, 
+                   fixed = fixed, conditions = "Epo")
+
 pars <- as.parframe(fitlist)
-plotValues(subset(pars, converged))
-plotPars(subset(pars, converged))
+plotValues(pars, tol = .1)
+plotPars(pars, tol = .1)
 
 
 ## ---- fig.width = 10, fig.height = 3.5-----------------------------------
@@ -124,7 +138,7 @@ plotPars(subset(pars, converged))
 controls(g, NULL, "attach.input") <- TRUE
 prediction <- predict(g*x*p, 
                       times = 0:60, 
-                      pars = subset(pars, converged), 
+                      pars = unique(pars[pars$converged, ], tol = .1), 
                       data = data, 
                       fixed = c(multiple = 2))
 

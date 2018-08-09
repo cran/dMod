@@ -2,11 +2,11 @@
 % Please edit documentation in R/classes.R
 \name{getDerivs}
 \alias{getDerivs}
-\alias{getDerivs.list}
-\alias{getDerivs.objlist}
 \alias{getDerivs.parvec}
 \alias{getDerivs.prdframe}
 \alias{getDerivs.prdlist}
+\alias{getDerivs.list}
+\alias{getDerivs.objlist}
 \title{Extract the derivatives of an object}
 \usage{
 getDerivs(x, ...)
@@ -29,12 +29,11 @@ getDerivs(x, ...)
 \value{
 The derivatives in a format that depends on the class of \code{x}.
 This is
-\code{parvec -> matrix}, 
-\code{prdframe -> prdframe}, 
-\code{prdlist -> prdlist}, 
+\code{parvec -> matrix},
+\code{prdframe -> prdframe},
+\code{prdlist -> prdlist},
 \code{objlist -> named numeric}.
 }
 \description{
 Extract the derivatives of an object
 }
-

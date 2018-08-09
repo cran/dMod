@@ -350,17 +350,10 @@ wide2long.matrix <- function(out, keep = 1, na.rm = FALSE) {
 wide2long.list <- function(out, keep = 1, na.rm = FALSE) {
   
   conditions <- names(out)
-  numconditions <- suppressWarnings(as.numeric(conditions))
-  
-  if(!any(is.na(numconditions))) 
-    numconditions <- as.numeric(numconditions) 
-  else 
-    numconditions <- conditions
-  
   
   outlong <- do.call(rbind, lapply(1:max(c(length(conditions), 1)), function(cond) {
     
-    cbind(wide2long.matrix(out[[cond]]), condition = numconditions[cond])
+    cbind(wide2long.matrix(out[[cond]]), condition = conditions[cond])
     
   }))
   
@@ -437,9 +430,13 @@ expand.grid.alt <- function(seq1, seq2) {
 #' @param output Optional character of the file to be produced. If several objects were
 #' passed, the different C files are all compiled into one shared object file.
 #' @param args Additional arguments for the R CMD SHLIB call, e.g. \code{-leinspline}.
+#' @param verbose Print compiler output to R command line.
 #' @param cores Number of cores used for compilation when several files are compiled.
+#' @param recompile If .so-file with hash+output exists already, recompile and overwrite or don't?
+#' 
+#' @importFrom digest digest
 #' @export
-compile <- function(..., output = NULL, args = NULL, cores = 1) {
+compile <- function(..., output = NULL, args = NULL, cores = 1, verbose = F, recompile = F) {
   
   objects <- list(...)
   obj.names <- as.character(substitute(list(...)))[-1]
@@ -450,10 +447,8 @@ compile <- function(..., output = NULL, args = NULL, cores = 1) {
     if (inherits(objects[[i]], c("obsfn", "parfn", "prdfn"))) {
       # Get and reset modelname
       filename <- modelname(objects[[i]])
-      if (!is.null(output))
-        eval(parse(text = paste0("modelname(", obj.names[i], ") <<- '", output, "'")))
       # Expand modelname by possible endings and check if file exists
-      filename <- outer(filename, c("", "_deriv", "_s", "_sdcv"), paste0)
+      filename <- outer(filename, c("", "_deriv", "_s", "_sdcv", "_dfdx", "_dfdp"), paste0)
       files.obj <- c(paste0(filename, ".c"), paste0(filename, ".cpp"))
       files.obj <- files.obj[file.exists(files.obj)]
       files <- union(files, files.obj)
@@ -473,13 +468,25 @@ compile <- function(..., output = NULL, args = NULL, cores = 1) {
   if (is.null(output)) {
     compilation_out <- mclapply(1:length(files), function(i) {
       try(dyn.unload(paste0(roots[i], .so)), silent = TRUE)
-      system(paste0(R.home(component = "bin"), "/R CMD SHLIB ", files[i], " ", args))
+      system(paste0(R.home(component = "bin"), "/R CMD SHLIB ", files[i], " ", args), intern = !verbose)
     }, mc.cores = cores, mc.silent = FALSE)
     for (r in roots) dyn.load(paste0(r, .so))
   } else {
+    # Append short hash of all .c-files which go into the compiled dll
+    output <- paste0(output, "_", substr(digest(list(roots)),1,8))
+    for (i in 1:length(objects)) {
+      eval(parse(text = paste0("modelname(", obj.names[i], ") <<- '", output, "'")))
+    }
     for (r in roots) try(dyn.unload(paste0(r, .so)), silent = TRUE)
+    
+    if (file.exists(paste0(output, .so)) & !recompile) {
+      dyn.load(paste0(output, .so))
+      if (verbose) message("File already existing. Library was not overwritten.")
+      return(NULL)
+    }
+    
     try(dyn.unload(output), silent = TRUE)
-    system(paste0(R.home(component = "bin"), "/R CMD SHLIB ", paste(files, collapse = " "), " -o ", output, .so, " ", args))
+    system(paste0(R.home(component = "bin"), "/R CMD SHLIB ", paste(files, collapse = " "), " -o ", output, .so, " ", args), intern = !verbose)
     dyn.load(paste0(output, .so))
   }
   
@@ -546,3 +553,115 @@ sanitizeConditions <- function(conditions) {
   return(new)
   
 }
+
+sanitizePars <- function(pars = NULL, fixed = NULL) {
+  
+  # Convert fixed to named numeric
+  if (!is.null(fixed)) fixed <- structure(as.numeric(fixed), names = names(fixed))
+  
+  # Convert pars to named numeric
+  if (!is.null(pars)) {
+    pars <- structure(as.numeric(pars), names = names(pars))
+    # remove fixed from pars
+    pars <- pars[setdiff(names(pars), names(fixed))]
+  }
+    
+  
+  return(list(pars = pars, fixed = fixed))
+  
+}
+
+
+
+
+#' Print list of dMod objects in .GlobalEnv
+#' 
+#' @description Lists the objects for a set of classes.
+#'   
+#' @param classlist List of object classes to print.
+#' @param envir Alternative environment to search for objects.
+#' @examples 
+#' \dontrun{
+#' lsdMod()
+#' lsdMod(classlist = "prdfn", envir = environment(obj)) 
+#' }
+#' 
+#' @export
+lsdMod <- function(classlist = c("odemodel", "parfn", "prdfn", "obsfn", "objfn", "datalist"), envir = .GlobalEnv){
+  glist <- as.list(envir)
+  out <- list()
+  for (a in classlist) {
+    flist <- which(sapply(glist, function(f) any(class(f) == a)))
+    out[[a]] <- names(glist[flist])
+    #cat(a,": ")
+    #cat(paste(out[[a]], collapse = ", "),"\n")
+  }
+  
+  unlist(out)
+  
+  
+  
+}
+
+
+
+
+
+#' Select attributes.
+#' 
+#' @description Select or discard attributes from an object.
+#'   
+#' @param x The object to work on
+#' @param atr An optional list of attributes which are either kept or removed. 
+#'   This parameter defaults to dim, dimnames, names,  col.names, and row.names.
+#' @param keep For keep = TRUE, atr is a positive list on attributes which are 
+#'   kept, for keep = FALSE, \option{atr} are removed.
+#'   
+#' @return x with selected attributes.
+#'   
+#' @author Wolfgang Mader, \email{Wolfgang.Mader@@fdm.uni-freiburg.de}
+#' @author Mirjam Fehling-Kaschek, \email{mirjam.fehling@@physik.uni-freiburg.de}
+#'   
+#' @export
+attrs <- function(x, atr = NULL, keep = TRUE) {
+
+  if (is.null(atr)) {
+    atr <- c("class", "dim", "dimnames", "names", "col.names", "row.names")
+  }
+  
+  xattr <- names(attributes(x))
+  if (keep == TRUE) {
+    attributes(x)[!xattr %in% atr] <- NULL
+  } else {
+    attributes(x)[xattr %in% atr] <- NULL
+  }
+  
+  return(x)
+}
+
+
+
+
+#' Print object and its "default" attributes only.
+#' 
+#' @param x Object to be printed
+#' @param list_attributes Prints the names of all attribute of x, defaults to 
+#'   TRUE
+#'   
+#' @details Before the \option{x} is printed by print.default, all its arguments
+#'   not in the default list of \code{\link{attrs}} are removed.
+#'   
+#' @author Wolfgang Mader, \email{Wolfgang.Mader@@fdm.uni-freiburg.de}
+#' @author Mirjam Fehling-Kaschek, 
+#'   \email{mirjam.fehling@@physik.uni-freiburg.de}
+#'   
+#' @export
+print0 <- function(x, list_attributes = TRUE ) {
+  if (list_attributes == TRUE) {
+    cat("List of all attributes: ", names(attributes(x)), "\n")
+  }
+  
+  print.default(attrs(x))
+}
+
+

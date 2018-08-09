@@ -12,4 +12,3 @@ Character vector with the names of the loaded DLLs available in the working dire
 \description{
 Determine loaded DLLs available in working directory
 }
-
