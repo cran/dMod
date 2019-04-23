@@ -20,7 +20,6 @@
 #' @param method character, either \code{"explicit"} or \code{"implicit"}
 #' @param verbose Print out information during compilation
 #' @return An object of class \link{parfn}.
-#' @importFrom digest digest
 #' @export
 P <- function(trafo = NULL, parameters=NULL, condition = NULL, attach.input = FALSE,  keep.root = TRUE, compile = FALSE, modelname = NULL, method = c("explicit", "implicit"), verbose = FALSE) {
   
@@ -32,9 +31,6 @@ P <- function(trafo = NULL, parameters=NULL, condition = NULL, attach.input = FA
   
   method <- match.arg(method)
   
-  # Add hash to prevent overwriting of .c-files with different content
-  if (!is.null(modelname)) modelname <- paste0(modelname, "_", substr(digest(list(trafo, parameters)),1,8))
-
   Reduce("+", lapply(1:length(trafo), function(i) {
   
       switch(method, 
@@ -285,11 +281,14 @@ Pimpl <- function(trafo, parameters=NULL, condition = NULL, keep.root = TRUE, po
     # check for parameters which are not computed by multiroot
     emptypars <- names(p)[!names(p)%in%c(dependent, fixed)]
     
-    # Set guess
+    # Set guess if available
     p0 <- p
     if(!is.null(guess)) 
       p[intersect(dependent, names(guess))] <- guess[intersect(dependent, names(guess))]
     
+    # If no initial guesses provides, set to 1
+    if (!all(dependent %in% names(p)))
+      p[setdiff(dependent, names(p))] <- 1
     
     getRoot <- function(p) {
       

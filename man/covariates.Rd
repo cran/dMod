@@ -14,7 +14,7 @@ covariates(x)
 }
 \arguments{
 \item{x}{Either a \link{datalist} or a \code{data.frame} with mandatory 
-columns \code{c("name", "time", "value", "sigma")}.}
+columns \code{c("name", "time", "value", "sigma", "lloq")}.}
 }
 \value{
 The \code{condition.grid} of the data

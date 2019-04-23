@@ -27,15 +27,12 @@
 #' @export
 #' @example inst/examples/odemodel.R
 #' @import cOde
-#' @importFrom digest digest
 odemodel <- function(f, deriv = TRUE, forcings=NULL, events = NULL, outputs = NULL, fixed = NULL, estimate = NULL, modelname = "odemodel", solver = c("deSolve", "Sundials"), gridpoints = NULL, verbose = FALSE, ...) {
 
 
   if (is.null(gridpoints)) gridpoints <- 2
 
   f <- as.eqnvec(f)
-  # Add hash to prevent overwriting existing models
-  modelname <- paste0(modelname, "_", substr(digest(list(f,forcings,events,outputs,fixed,estimate,solver,gridpoints)),1,8))
   modelname_s <- paste0(modelname, "_s")
   solver <- match.arg(solver)
 
@@ -72,7 +69,21 @@ odemodel <- function(f, deriv = TRUE, forcings=NULL, events = NULL, outputs = NU
                            reduce = TRUE)
     fs <- c(f, s)
     outputs <- c(attr(s, "outputs"), attr(func, "outputs"))
-    events <- rbind(attr(s, "events"), attr(func, "events"))
+    
+    events.sens <- attr(s, "events") 
+    events.func <- attr(func, "events")
+    events <- NULL
+    if (!is.null(events.func)) {
+      if (is.data.frame(events.sens)) {
+        events <- rbind(events.sens, events.func, straingsAsFactors = FALSE)
+      } else {
+        events <- do.call(rbind, lapply(1:nrow(events.func), function(i) {
+          rbind(events.sens[[i]], events.func[i,], stringsAsFactors = FALSE)
+        }))
+      }
+      
+    }
+    
 
     extended <- cOde::funC(fs, forcings = forcings, modelname = modelname_s, solver = solver, nGridpoints = gridpoints, events = events, outputs = outputs, ...)
   }
@@ -86,6 +97,14 @@ odemodel <- function(f, deriv = TRUE, forcings=NULL, events = NULL, outputs = NU
 
 ## Function classes ------------------------------------------------------
 
+#' dMod match function arguments
+#' 
+#' The function is exported for dependency reasons
+#' 
+#' @param arglist list
+#' @param choices character
+#' 
+#' @export
 match.fnargs <- function(arglist, choices) {
 
   # Catch the case of names == NULL
@@ -554,6 +573,10 @@ prdlist <- function(...) {
 #' @details Datalists can be plotted, see \link{plotData} and merged, see \link{sumdatalist}.
 #' They are the basic structure when combining model prediction and data via the \link{normL2}
 #' objective function.
+#' 
+#' The standard columns of the datalist data frames are "name" (observable name), 
+#' "time" (time points), "value" (data value), "sigma" (uncertainty, can be NA), and
+#' "lloq" (lower limit of quantification, \code{-Inf} by default).
 #'
 #' Datalists carry the attribute \code{condition.grid} which contains additional information about different
 #' conditions, such as dosing information for the experiment. It can be conveniently accessed by the \link{covariates}-function.
@@ -899,6 +922,7 @@ objframe <- function(mydata, deriv = NULL, deriv.err = NULL) {
   attr(outfn, "mappings") <- mappings
   attr(outfn, "parameters") <- union(attr(x1, "parameters"), attr(x2, "parameters"))
   attr(outfn, "conditions") <- conditions.x12
+  attr(outfn, "forcings") <- do.call(c, list(attr(x1, "forcings"), attr(x2, "forcings")))
 
   return(outfn)
 
@@ -1521,6 +1545,11 @@ getParameters.eqnlist <- function(x) {
   unique(c(getSymbols(x$states), getSymbols(x$rates), getSymbols(x$volumes)))
 }
 
+#' @export
+#' @rdname getParameters
+getParameters.eventlist <- function(x) {
+  Reduce(union, lapply(x[c(1:3)], getSymbols))
+}
 
 #' Extract the conditions of an object
 #'
@@ -1612,6 +1641,8 @@ mname.fn <- function(x, conditions = NULL) {
 
 }
 
+
+
 #' @export
 #' @rdname modelname
 #' @param x dMod object for which the model name should be set
@@ -1638,7 +1669,10 @@ mname.fn <- function(x, conditions = NULL) {
   for (i in select) {
     attr(attr(x, "mappings")[[i]], "modelname") <- value[i]
     if (inherits(x, "prdfn")) {
-      attr(environment(attr(x, "mappings")[[i]])[["extended"]], "modelname") <- value[i]
+      extended <- environment(attr(x, "mappings")[[i]])[["extended"]]
+      if (!is.null(extended)) {
+        attr(environment(attr(x, "mappings")[[i]])[["extended"]], "modelname") <- value[i]
+      }
       attr(environment(attr(x, "mappings")[[i]])[["func"]], "modelname") <- value[i]
     }
   }
@@ -1654,6 +1688,7 @@ mname.fn <- function(x, conditions = NULL) {
   attr(x, "modelname") <- value
   return(x)
 }
+
 
 
 

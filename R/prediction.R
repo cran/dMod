@@ -192,26 +192,27 @@ Xf <- function(odemodel, forcings = NULL, events = NULL, condition = NULL, optio
     optionsOde = optionsOde
   )
   
-  P2X <- function(times, P){
+  P2X <- function(times, pars, deriv = TRUE){
     
     events <- controls$events
     forcings <- controls$forcings
+    optionsOde <- controls$optionsOde
     
     # Add event time points (required by integrator) 
     event.times <- unique(events$time)
     times <- sort(union(event.times, times))
     
     
-    yini[names(P[names(P) %in% variables])] <- P[names(P) %in% variables]
-    pars <- P[parameters]
+    yini[names(pars[names(pars) %in% variables])] <- pars[names(pars) %in% variables]
+    mypars <- pars[parameters]
     #alltimes <- unique(sort(c(times, forctimes)))
     
     # loadDLL(func)
     if(!is.null(forcings)) forc <- setForcings(func, forcings) else forc <- NULL
-    out <- do.call(odeC, c(list(y=yini, times=times, func=func, parms=pars, forcings=forc,events = list(data = events)), optionsOde))
+    out <- suppressWarnings(do.call(odeC, c(list(y=yini, times=times, func=func, parms=mypars, forcings=forc,events = list(data = events)), optionsOde)))
     #out <- cbind(out, out.inputs)      
     
-    prdframe(out, deriv = NULL, parameters = P)
+    prdframe(out, deriv = NULL, parameters = pars)
     
   }
   
@@ -389,7 +390,9 @@ Xd <- function(data, condition = NULL) {
 #' the Jacobian 
 #' of the parameter transformation and the sensitivities of the observation function
 #' are multiplied according to the chain rule for differentiation.
-#' @importFrom digest digest
+#' @details For \link{odemodel}s with forcings, it is best, to pass the prediction function \code{x} to the "f"-argument 
+#' instead of the equations themselves. If an eqnvec is passed to "f" in this case, the forcings and states
+#' have to be specified manually via the "states"-argument.
 #' @example inst/examples/prediction.R
 #' @export
 Y <- function(g, f = NULL, states = NULL, parameters = NULL, condition = NULL, attach.input = TRUE, deriv = TRUE, compile = FALSE, modelname = NULL, verbose = FALSE) {
@@ -412,9 +415,6 @@ Y <- function(g, f = NULL, states = NULL, parameters = NULL, condition = NULL, a
   # Modify modelname by condition
   if (!is.null(modelname) && !is.null(condition)) modelname <- paste(modelname, sanitizeConditions(condition), sep = "_")
   
-  # Add hash to modelname to prevent overwriting .c-files with different content
-  if (!is.null(modelname)) modelname <- paste0(modelname, "_", substr(digest(list(g,f,states,parameters,condition,attach.input,deriv)),1,8))
-  
   # Then add suffix(es) for derivative function
   if (!is.null(modelname)) modelname_deriv <- paste(modelname, "deriv", sep = "_")
   
@@ -431,10 +431,18 @@ Y <- function(g, f = NULL, states = NULL, parameters = NULL, condition = NULL, a
     estimate <- union(states, parameters)
     parameters <- union(parameters, setdiff(symbols, c(states, "time")))
   } else if (inherits(f, "fn")) {
-    mystates <- union(names(attr(attr(f, "mappings")[[1]], "equations")), "time")
-    myparameters <- setdiff(union(getParameters(f), getSymbols(unclass(g))), mystates)
+    myforcings <- Reduce(union, lapply(lapply(attr(f, "mappings"), 
+                                              function(mymapping) {attr(mymapping, "forcings")}), 
+                                       function(myforcing) {as.character(myforcing$name)}))
+    mystates <- unique(c(do.call(c, lapply(getEquations(f), names)), "time"))
+    if(length(intersect(myforcings, mystates)) > 0)
+      stop("Forcings and states overlap in different conditions. Please run Y for each condition by supplying only the condition specific f.")
+    
+    mystates <- c(mystates, myforcings)
+    myparameters <- setdiff(union(getParameters(f), getSymbols(unclass(g))), c(mystates, myforcings))
+    
     estimate <- c(states, parameters)
-    if (is.null(states)) estimate <- c(estimate, mystates)
+    if (is.null(states)) estimate <- c(estimate, setdiff(mystates, myforcings))
     if (is.null(parameters)) estimate <- c(estimate, myparameters)
     states <- union(mystates, states)
     parameters <- union(myparameters, parameters)

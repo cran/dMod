@@ -7,7 +7,6 @@
 #' contained in the sensitivity equations). If "deriv" is given, also "parameters"
 #' needs to be given.
 #' @param err output of the error model function
-#' @param loq single numeric or named numeric, limit of quantification
 #' @return data.frame with the original data augmented by columns "prediction" (
 #' numeric, the model prediction), "residual" (numeric, difference between
 #' prediction and data value), "weighted.residual" (numeric, residual devided
@@ -17,7 +16,7 @@
 #' @export
 #' @import cOde
 #' @importFrom stats setNames
-res <- function(data, out, err = NULL, loq = -Inf) {
+res <- function(data, out, err = NULL) {
   
   data$name <- as.character(data$name)
   
@@ -26,11 +25,11 @@ res <- function(data, out, err = NULL, loq = -Inf) {
   names <- unique(data$name)
   
   # Match data times/names in unique times/names
-  data.time <- match(data$time, times)
+  data.time <- match.num(data$time, times)
   data.name <- match(data$name, names)
   
   # Match unique times/names in out times/names
-  time.out <- match(times, out[,1])
+  time.out <- match.num(times, out[,1])
   name.out <- match(names, colnames(out))
   
 
@@ -47,17 +46,9 @@ res <- function(data, out, err = NULL, loq = -Inf) {
   deriv.err <- attr(err, "deriv")
   deriv.err.data <- NULL
   
-  # Deal with limit of quantification
-  observables <- unique(data$name)
-  if (length(loq) == 1) {
-    myloq <- setNames(rep(loq, length(observables)), observables)
-  } else {
-    myloq <- setNames(rep(-Inf, length(observables)), observables)
-    myloq[names(loq)] <- loq
-  }
   # Set value to loq if below loq
-  data$value <- pmax(data$value, myloq[data$name])
-  is.bloq <- data$value <= myloq[data$name]
+  data$value <- pmax(data$value, data$lloq)
+  is.bloq <- data$value <= data$lloq
   
   
   
@@ -83,7 +74,7 @@ res <- function(data, out, err = NULL, loq = -Inf) {
   # Modifications if error model is available
   if (!is.null(err)) {
     
-    time.err <- match(times, err[,1])
+    time.err <- match.num(times, err[,1])
     name.err <- match(names, colnames(err))
     timeIndex <- time.err[data.time]
     nameIndex <- name.err[data.name]
@@ -140,5 +131,11 @@ res <- function(data, out, err = NULL, loq = -Inf) {
 NULL
 
 
-
+# Match with numeric tolerance 
+match.num <- function(x, y, tol = 1e-8) {
+  
+  digits <- -log10(tol)
+  match(round(x, digits), round(y, digits))
+  
+} 
 

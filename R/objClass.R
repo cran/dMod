@@ -106,14 +106,13 @@ constraintExp2 <- function(p, mu, sigma = 1, k = 0.05, fixed=NULL) {
 #' function makes use of events, hand over event \code{times} here.
 #' @param attr.name character. The constraint value is additionally returned in an 
 #' attributed with this name
-#' @param loq named numeric or single valued numeric. Limit of quantification.
 #' @return Object of class \code{obsfn}, i.e. a function 
 #' \code{obj(..., fixed, deriv, conditions, env)} that returns an objective list,
 #' \link{objlist}.
 #' @details Objective functions can be combined by the "+" operator, see \link{sumobjfn}.
 #' @example inst/examples/normL2.R
 #' @export
-normL2 <- function(data, x, errmodel = NULL, times = NULL, attr.name = "data", loq = -Inf) {
+normL2 <- function(data, x, errmodel = NULL, times = NULL, attr.name = "data") {
 
   timesD <- sort(unique(c(0, do.call(c, lapply(data, function(d) d$time)))))
   if (!is.null(times)) timesD <- sort(union(times, timesD))
@@ -124,7 +123,7 @@ normL2 <- function(data, x, errmodel = NULL, times = NULL, attr.name = "data", l
     stop("The prediction function does not provide predictions for all conditions in the data.")
   e.conditions <- names(attr(errmodel, "mappings"))
   
-  controls <- list(times = timesD, attr.name = attr.name, conditions = x.conditions, loq = loq)
+  controls <- list(times = timesD, attr.name = attr.name, conditions = x.conditions)
 
   # might be necessary to "store" errmodel in the objective function (-> runbg)
   force(errmodel)  
@@ -146,7 +145,6 @@ normL2 <- function(data, x, errmodel = NULL, times = NULL, attr.name = "data", l
     # Import from controls
     timesD <- controls$times
     attr.name <- controls$attr.name
-    loq <- controls$loq
     
     # Create new environment if necessary
     if (is.null(env)) env <- new.env()
@@ -158,9 +156,9 @@ normL2 <- function(data, x, errmodel = NULL, times = NULL, attr.name = "data", l
       err <- NULL
       if ((!is.null(errmodel) & is.null(e.conditions)) | (!is.null(e.conditions) && (cn %in% e.conditions))) {
         err <- errmodel(out = prediction[[cn]], pars = getParameters(prediction[[cn]]), conditions = cn)
-        mywrss <- nll(res(data[[cn]], prediction[[cn]], err[[cn]], loq))
+        mywrss <- nll(res(data[[cn]], prediction[[cn]], err[[cn]]))
       } else {
-        mywrss <- wrss(res(data[[cn]], prediction[[cn]], NULL, loq))  
+        mywrss <- wrss(res(data[[cn]], prediction[[cn]]))  
       }
       available <- intersect(pars_out, names(mywrss$gradient))
       result <- template
@@ -617,7 +615,7 @@ wrss <- function(nout) {
   
   # Drop BLOQ part from nout
   nout <- nout[!is.bloq, , drop = FALSE]
-  obj <- sum(nout$weighted.residual^2) + sum(-2*log(pnorm(-nout.bloq$weighted.residual)))
+  obj <- sum(nout$weighted.residual^2) 
   
   grad <- NULL
   hessian <- NULL
@@ -628,7 +626,7 @@ wrss <- function(nout) {
     derivs.bloq <- derivs[is.bloq, , drop = FALSE]
     # Drop BLOQ part from derivs
     derivs <- derivs[!is.bloq, , drop = FALSE]
-
+    
     if (nrow(derivs) > 0) {
       
       nout$sigma[is.na(nout$sigma)] <- 1 #replace by neutral element
@@ -639,28 +637,34 @@ wrss <- function(nout) {
       
       grad <- as.vector(2*matrix(res/sigma^2, nrow = 1) %*% sens)
       names(grad) <- colnames(sens)
-      hessian <- 2*t(sens/sigma) %*% (sens/sigma)
+      hessian <- 2*t(sens/sigma) %*% (sens/sigma) # + 2. sens
       
     }
     
     if (nrow(derivs.bloq) > 0) {
       
+      objvals.bloq <- -2*pnorm(-nout.bloq$weighted.residual, log.p = TRUE)
+      obj.bloq <- sum(objvals.bloq)
+      
       nout.bloq[is.na(nout.bloq$sigma)] <- 1
       sens.bloq <- as.matrix(derivs.bloq[, -(1:2), drop = FALSE])
       
-      Phi <- pnorm(-nout.bloq$weighted.residual)
-      G <- dnorm(-nout.bloq$weighted.residual)
       res <- nout.bloq$residual
       sigma <- nout.bloq$sigma
       
+      LPhi <- pnorm(-nout.bloq$weighted.residual, log.p = TRUE)
+      LG <- dnorm(-nout.bloq$weighted.residual, log = TRUE)
+      G_divided_by_Phi <- exp(LG-LPhi)
       
-      grad.bloq <- as.vector(matrix(2*G/(Phi*sigma), nrow = 1) %*% sens.bloq)
+      grad.bloq <- as.vector(matrix(2 * G_divided_by_Phi/(sigma), nrow = 1) %*% sens.bloq)
       names(grad.bloq) <- colnames(sens.bloq)
       
-      X1 <- sens.bloq*(G/(Phi*sigma))^2
-      X2 <- sens.bloq*(res*G/(Phi*sigma^3))
-      hessian.bloq <- 2 * t(X1) %*% sens.bloq - 2 * t(X2) %*% sens.bloq
+      X1 <- sens.bloq*(G_divided_by_Phi/(sigma))^2
+      X2 <- sens.bloq*(res*G_divided_by_Phi/(sigma^3))
+      hessian.bloq <- 2 * t(X1) %*% sens.bloq - 2 * t(X2) %*% sens.bloq  # + 2. sens
       
+      
+      obj <- obj + obj.bloq
       if (is.null(grad) & is.null(hessian)) {
         grad <- grad.bloq
         hessian <- hessian.bloq
@@ -671,11 +675,9 @@ wrss <- function(nout) {
       
     }
     
-    
-    
   }
   
-
+  
   objlist(value = obj, gradient = grad, hessian = hessian)
   
 }
@@ -696,8 +698,7 @@ nll <- function(nout) {
   # Drop BLOQ part from nout
   nout <- nout[!is.bloq, , drop = FALSE]
   
-  obj <- sum(nout$weighted.residual^2) + sum(log(2*pi*nout$sigma^2)) + 
-    sum(-2*log(pnorm(-nout.bloq$weighted.residual)))
+  obj <- sum(nout$weighted.residual^2) + sum(log(2*pi*nout$sigma^2)) 
   grad <- NULL
   hessian <- NULL
   
@@ -715,7 +716,7 @@ nll <- function(nout) {
     derivs.err <- derivs.err[!is.bloq, , drop = FALSE]
     
     if (nrow(derivs) > 0 & nrow(derivs.err) > 0) {
-    
+      
       # Get sensitivities: sens = dres/dp, sens.err = dsigma/dp
       sens <- as.matrix(derivs[, -(1:2), drop = FALSE])
       sens.err <- as.matrix(derivs.err[, -(1:2), drop = FALSE])
@@ -740,27 +741,33 @@ nll <- function(nout) {
     
     if (nrow(derivs.bloq) > 0 & nrow(derivs.err.bloq) > 0) {
       
+      objvals.bloq <- -2*pnorm(-nout.bloq$weighted.residual, log.p = TRUE)
+      obj.bloq <- sum(objvals.bloq)
+      
       # Get sensitivities: sens = dres/dp, sens.err = dsigma/dp
       sens.bloq <- as.matrix(derivs.bloq[, -(1:2), drop = FALSE])
       sens.err.bloq <- as.matrix(derivs.err.bloq[, -(1:2), drop = FALSE])
       
-      Phi <- pnorm(-nout.bloq$weighted.residual)
-      G <- dnorm(-nout.bloq$weighted.residual)
       res <- nout.bloq$residual
       sigma <- nout.bloq$sigma
       
+      LPhi <- pnorm(-nout.bloq$weighted.residual, log.p = TRUE)
+      LG <- dnorm(-nout.bloq$weighted.residual, log = TRUE)
+      G_divided_by_Phi <- exp(LG-LPhi)
+      
       # Compute gradient
-      grad.bloq <- as.vector(matrix(2*G/(Phi*sigma), nrow = 1) %*% sens.bloq) -
-        as.vector(matrix(2*G*res/(Phi*sigma^2), nrow = 1) %*% sens.err.bloq)
+      grad.bloq <- as.vector(matrix(2*G_divided_by_Phi/sigma, nrow = 1) %*% sens.bloq) -
+        as.vector(matrix(2*G_divided_by_Phi*res/(sigma^2), nrow = 1) %*% sens.err.bloq)
       names(grad.bloq) <- colnames(sens.bloq)
       
       # Compute hessian
       X <- -(1/sigma)*sens.bloq + (res/sigma^2)*sens.err.bloq
-      X1 <- (2*G^2/Phi^2)*X
-      X2 <- (2*G*res/(Phi*sigma))*X
+      X1 <- (2*G_divided_by_Phi^2)*X
+      X2 <- (2*G_divided_by_Phi*res/(sigma))*X
       
-      hessian.bloq <- t(X1) %*% X  - t(X2) %*% X
+      hessian.bloq <- t(X1) %*% X  - t(X2) %*% X 
       
+      obj <- obj + obj.bloq
       if (is.null(grad) & is.null(hessian)) {
         grad <- grad.bloq
         hessian <- hessian.bloq

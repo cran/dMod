@@ -7,6 +7,7 @@ library(dplyr)
   
 setwd(tempdir())
 
+
 # Set up reactions
 f <- eqnvec() %>%
   addReaction("A", "B", "k1*A", "Production of B") %>%
@@ -51,10 +52,17 @@ data <- as.datalist(datasheet)
 
 ## Fit data with error model
 obj <- normL2(data, g*x*p, e)
-myfit <- trust(obj, ptrue, rinit = 1, rmax = 10)
-fits <- mstrust(obj, center = ptrue, sd = 3, fits = 10, cores = 10)
+myfit <- trust(obj, ptrue, rinit = 1, rmax = 10, printIter = TRUE)
+fits <- mstrust(obj, center = ptrue, sd = 3, fits = 2, cores = 2, printIter = TRUE)
+
+mypars <- myfit$argument[-1]
+myfixed <- myfit$argument[1]
+
 profiles <- profile(obj + constraintL2(myfit$argument, 10), 
-                    myfit$argument, names(myfit$argument), limits = c(-5, 5), cores = length(myfit$argument))
+                    mypars, names(mypars), 
+                    limits = c(-5, 5), 
+                    fixed = myfixed, 
+                    cores = length(mypars))
 plotProfile(profiles)
 
 

@@ -144,6 +144,7 @@ plotCombined.prdlist <- function(prediction, data = NULL, ..., scales = "free", 
     data <- base::merge(data, covtable, by = "condition", all.x = T)
     data <- dplyr::filter(data, ...)
     data <- as.data.frame(data, stringsAsFactors = F)
+    data$bloq <- ifelse(data$value <= data$lloq, "yes", "no")
     
     if (!is.null(transform)) data <- coordTransform(data, transform)
   }
@@ -159,29 +160,31 @@ plotCombined.prdlist <- function(prediction, data = NULL, ..., scales = "free", 
   total <- rbind(prediction[, unique(c(mynames, names(covtable)))], data[, unique(c(mynames, names(covtable)))])
   
   
-  aesthetics <- lapply(aesthetics, function(myaes) {
-    if (!is.na(suppressWarnings(as.numeric(myaes))))
-      return(myaes)
-    return(rlang::sym(myaes))})
-  
   if (facet == "wrap"){
-    aes0 <- list(ymin = "value - sigma", ymax = "value + sigma", group = "condition", color = "condition")
+    aes0 <- list(x = "time", y = "value", ymin = "value - sigma", ymax = "value + sigma", group = "condition", color = "condition")
     aesthetics <- c(aes0[setdiff(names(aes0), names(aesthetics))], aesthetics)
-    p <- ggplot(total, do.call("aes_string", c(list(x = "time", y = "value"), aesthetics))) + facet_wrap(~name, scales = scales)}
+    p <- ggplot(total, do.call("aes_string", aesthetics)) + facet_wrap(~name, scales = scales)}
   if (facet == "grid"){
-    aes0 <- list(ymin = "value - sigma", ymax = "value + sigma")
+    aes0 <- list(x = "time", y = "value", ymin = "value - sigma", ymax = "value + sigma")
     aesthetics <- c(aes0[setdiff(names(aes0), names(aesthetics))], aesthetics)
-    p <- ggplot(total, do.call("aes_string", c(list(x = "time", y = "value"), aesthetics))) + facet_grid(name ~ condition, scales = scales)}
+    p <- ggplot(total, do.call("aes_string", aesthetics)) + facet_grid(name ~ condition, scales = scales)}
   if (facet == "wrap_plain"){
-    aes0 <- list(ymin = "value - sigma", ymax = "value + sigma")
+    aes0 <- list(x = "time", y = "value", ymin = "value - sigma", ymax = "value + sigma")
     aesthetics <- c(aes0[setdiff(names(aes0), names(aesthetics))], aesthetics)
-    p <- ggplot(total, do.call("aes_string", c(list(x = "time", y = "value"), aesthetics))) + facet_wrap(~name*condition, scales = scales)}
+    p <- ggplot(total, do.call("aes_string", aesthetics)) + facet_wrap(~name*condition, scales = scales)}
   
   if (!is.null(prediction))
     p <- p +  geom_line(data = prediction)
   
   if (!is.null(data))
-    p <- p + geom_point(data = data) + geom_errorbar(data = data, width = 0)
+    p <- p + 
+    geom_point(data = data, aes(pch = bloq)) + 
+    geom_errorbar(data = data, width = 0) +
+    scale_shape_manual(name = "BLoQ", values = c(yes = 4, no = 19))
+  
+  if (all(data$bloq %in% "no"))
+    p <- p + guides(shape = FALSE)
+  
   
   attr(p, "data") <- list(data = data, prediction = prediction)
   return(p)

@@ -58,7 +58,8 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
                           ...) {
   
   # Guarantee that pars is named numeric without deriv attribute
-  sanePars <- sanitizePars(pars, list(...)$fixed)
+  dotArgs <- list(...)
+  sanePars <- sanitizePars(pars, dotArgs$fixed)
   pars <- sanePars$pars
   fixed <- sanePars$fixed
   
@@ -77,6 +78,7 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
   }
   
   # Check if on Windows
+  cores <- min(length(whichPar), cores)
   cores <- sanitizeCores(cores)
   
   # Substitute user-set control parameters
@@ -84,11 +86,58 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
   if (!is.null(algoControl)) aControl[match(names(algoControl), names(aControl))] <- algoControl
   if (!is.null(optControl )) oControl[match(names(optControl), names(oControl ))] <- optControl
     
-  do.call(rbind, mclapply(whichPar, function(whichPar) {
+  
+  
+  
+  
+  
+  
+  # Start cluster if on windows
+  if (cores > 1) {
+    
+    if (Sys.info()[['sysname']] == "Windows") {
+      
+      cluster <- parallel::makeCluster(cores)
+      doParallel::registerDoParallel(cl = cluster)
+      
+      parallel::clusterCall(cl = cluster, function(x) .libPaths(x), .libPaths())
+      
+      varlist <- ls()
+      # Exclude things like "missing argument"
+      varlist <- c("obj", "whichPar", "alpha", "limits", "method", "verbose", "cores",
+                   "pars", "fixed", "dotArgs",
+                   "sControl", "aControl", "oControl")
+      parallel::clusterExport(cluster, envir = environment(), varlist = varlist)
+      
+    } else {
+      
+      doParallel::registerDoParallel(cores = cores)
+      
+    }
+  
+    "%mydo%" <- foreach::"%dopar%"
     
     
-    if (is.character(whichPar)) whichPar <- which(names(pars) == whichPar)
-    whichPar.name <- names(pars)[whichPar]
+  } else {
+    
+    "%mydo%" <- foreach::"%do%"
+    
+  }
+  
+  
+  # Convert whichPar to index vector
+  if (is.character(whichPar)) whichPar <- which(names(pars) %in% whichPar)
+  
+  loaded_packages <- .packages()  
+  out <- foreach::foreach(whichIndex = whichPar, 
+                          .packages = loaded_packages, 
+                          .inorder = TRUE,
+                          .options.multicore = list(preschedule = FALSE)) %mydo% {
+    
+    loadDLL(obj)
+    
+
+    whichPar.name <- names(pars)[whichIndex]
     
     
     
@@ -98,7 +147,7 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
       out <- obj(p, ...)
       # If "identity", substitute hessian such that steps are in whichPar-direction.
       Id <- diag(1/.Machine$double.eps, length(out$gradient))
-      Id[whichPar, whichPar] <- 1
+      Id[whichIndex, whichIndex] <- 1
       colnames(Id) <- rownames(Id) <- names(out$gradient)
       
       W <- match.arg(aControl$W[1], c("hessian", "identity"))
@@ -122,9 +171,9 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
     }
     
     constraint <- function(p) {
-      value <- p[whichPar] - pars[whichPar]
+      value <- p[whichIndex] - pars[whichIndex]
       gradient <- rep(0, length(p))
-      gradient[whichPar] <- 1
+      gradient[whichIndex] <- 1
       return(list(value = value, gradient = gradient))
     }
     lagrange <- function(y) {
@@ -132,7 +181,7 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
       # initialize values
       p <- y
       lambda <- 0
-      out <- obj.prof(p, ...)
+      out <- do.call(obj.prof, c(list(p = p), dotArgs))
       g.original <- constraint(p)
       
       # evaluate derivatives and constraints
@@ -154,7 +203,7 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
         dy <- try(as.vector(W%*%v)[1:length(p)], silent=FALSE)
         dy0 <- try(as.vector(W%*%v0)[1:length(p)], silent=FALSE)
         dy[!valid[1:length(p)]] <- dy0[!valid[1:length(p)]] <- 0
-        dy[whichPar] <- dy0[whichPar] <- direction
+        dy[whichIndex] <- dy0[whichIndex] <- direction
         warning(paste0("Iteration ", i, ": Some singular values of the Hessian are below the threshold. Optimization will be performed."))
       } else {
         dy <- try(as.vector(W%*%v)[1:length(p)], silent=FALSE)
@@ -176,7 +225,12 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
       out.attributes.names <- names(out.attributes)
       
       
-      return(c(list(dy = dy, value = out$value, gradient = out$gradient, correction = correction, valid = valid, attributes = out.attributes.names),
+      return(c(list(dy = dy, 
+                    value = out$value, 
+                    gradient = out$gradient, 
+                    correction = correction, 
+                    valid = valid, 
+                    attributes = out.attributes.names),
                out.attributes))
       
       
@@ -191,7 +245,7 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
         #cat("Evaluation of lagrange() not successful. Will optimize instead.\n")
         optimize <- TRUE
         y.try <- y
-        y.try[whichPar] <- y[whichPar] + direction*stepsize
+        y.try[whichIndex] <- y[whichIndex] + direction*stepsize
         rinit <- oControl$rinit
       } else {
         dy.norm <- sqrt(sum(dy^2))
@@ -202,12 +256,12 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
       
       # Do reoptimization if requested or necessary
       if(optimize) {      
-        parinit.opt <- y.try[-whichPar]
-        fixed.opt <- c(fixed, y.try[whichPar])
+        parinit.opt <- y.try[-whichIndex]
+        fixed.opt <- c(fixed, y.try[whichIndex])
         
         arglist <- c(list(objfun = obj.opt, parinit = parinit.opt, fixed = fixed.opt, rinit = rinit), 
                      oControl[names(oControl)!="rinit"],
-                     list(...)[names(list(...)) != "fixed"])
+                     dotArgs[names(dotArgs) != "fixed"])
         
         
         myfit <- try(do.call(trust, arglist), silent=FALSE)
@@ -301,7 +355,7 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
              constraint = as.vector(constraint.out$value), 
              stepsize = stepsize, 
              gamma = gamma, 
-             whichPar = whichPar,
+             whichPar = whichIndex,
              out.attributes, ini)
     
     # Compute right profile
@@ -352,7 +406,7 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
                      constraint = as.vector(constraint.out$value), 
                      stepsize = stepsize, 
                      gamma = gamma, 
-                     whichPar = whichPar,
+                     whichPar = whichIndex,
                      out.attributes, 
                      y))
       
@@ -411,7 +465,7 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
                      constraint = as.vector(constraint.out$value), 
                      stepsize = stepsize, 
                      gamma = gamma,
-                     whichPar = whichPar,
+                     whichPar = whichIndex,
                      out.attributes,
                      y), 
                    out)
@@ -433,7 +487,19 @@ profile <- function(obj, pars, whichPar, alpha = 0.05,
       obj.attributes = names(out.attributes)
     )
     
-  }, mc.cores = cores, mc.preschedule = FALSE))  
+  }
+  
+  
+  
+  if (Sys.info()[['sysname']] == "Windows" & cores > 1) {
+    
+    parallel::stopCluster(cluster)
+    doParallel::stopImplicitCluster()
+    
+  }
+  
+  do.call(rbind, out)
+  
   
 }
 
@@ -467,91 +533,96 @@ progressBar <- function(percentage, size = 50, number = TRUE) {
 confint.parframe <- function(object, parm = NULL, level = 0.95, ..., val.column = "data") {
   
   profile <- object
-  
-  maxvalue <- qchisq(level, df = 1)
-  
-  proflist <- as.data.frame(profile)
   obj.attributes <- attr(profile, "obj.attributes")
   
-  if(is.data.frame(proflist)) {
-    whichPars <- unique(proflist$whichPar)
-    if (!is.null(parm)) whichPars <- intersect(whichPars, parm)
-    if (length(whichPars) == 0) stop("profile does not contain the required parameters.")
-    proflist <- lapply(whichPars, function(n) {
-      with(proflist, proflist[whichPar == n, ])
-    })
-    names(proflist) <- whichPars
-  }
+  if (is.null(parm))
+    parm <- unique(profile[["whichPar"]])
   
-  # Discard faulty profiles
-  proflistidx <- sapply(proflist, function(prf) any(class(prf) == "data.frame"))
-  proflist <- proflist[proflistidx]
-  if (sum(!proflistidx) > 0) {
-    warning(sum(!proflistidx), " profiles discarded.", call. = FALSE)
-  }
-  subdata <- do.call(rbind, lapply(names(proflist), function(n) {
-    #print(n)
-    parvalues <- proflist[[n]][, n]
-    values <- proflist[[n]][, val.column]
-    origin <- which.min(abs(proflist[[n]][, "constraint"]))
-    zerovalue <- proflist[[n]][origin, val.column]
-    deltavalues <- values - zerovalue
-    deltavalues[deltavalues < 0] <- 0
-    deltavalues <- sqrt(deltavalues)
-    deltavalues[1:origin] <- - deltavalues[1:origin]
-    lpars <- length(parvalues)
-    x <- abs(deltavalues - sqrt(maxvalue))
-    position_upper <- which(x %in% sort(x)[1:2])[1:2]
-    x <- abs(deltavalues + sqrt(maxvalue))
-    position_lower <- which(x %in% sort(x)[1:2])[1:2]
-    #cat("deltas:",deltavalues[position_lower],deltavalues[position_upper], "\n")
-    #cat("pars:",parvalues[position_lower],parvalues[position_upper], "\n")
-    parlower <- try(approxExtrap(deltavalues[position_lower], y = parvalues[position_lower], xout = -sqrt(maxvalue)), silent = TRUE)
-    parupper <- try(approxExtrap(deltavalues[position_upper], y = parvalues[position_upper], xout = sqrt(maxvalue)), silent = TRUE)
+  threshold <- qchisq(level, df = 1)
+  
+  # Reduce to profiles for parm
+  profile <- profile[profile[["whichPar"]] %in% parm,]
+  
+  # Evaluate confidence intervals per parameter
+  CIs <- lapply(split(profile, profile[["whichPar"]]), function(d) {
     
-    if (inherits(parlower, "try-error")) parlower <- list(x = NA, y = NA)
-    if (inherits(parupper, "try-error")) parupper <- list(x = NA, y = NA)
+    # Get origin of profile
+    origin <- which.min(abs(d[["constraint"]]))
+    whichPar <- d[["whichPar"]][origin]
     
-    parmin <- parvalues[origin]
-    data.frame(name = n, value = parmin, lower = parlower$y, upper = parupper$y)
-  }))
-  return(subdata)
-}
-
-# Extrapolation extension to approx
-# 
-# from Hmisc package, built on approx
-approxExtrap <- function (x, y, xout, method = "linear", n = 50, rule = 2, f = 0, ties = "ordered", na.rm = FALSE) {
-if (is.list(x)) {
-  y <- x[[2]]
-  x <- x[[1]]
-}
-if (na.rm) {
-  d <- !is.na(x + y)
-  x <- x[d]
-  y <- y[d]
-}
-d <- !duplicated(x)
-x <- x[d]
-y <- y[d]
-d <- order(x)
-x <- x[d]
-y <- y[d]
-w <- approx(x, y, xout = xout, method = method, n = n, rule = 2, 
-            f = f, ties = ties)$y
-r <- range(x)
-d <- xout < r[1]
-if (any(is.na(d))) 
-  stop("NAs not allowed in xout")
-if (any(d)) 
-  w[d] <- (y[2] - y[1])/(x[2] - x[1]) * (xout[d] - x[1]) + 
-  y[1]
-d <- xout > r[2]
-n <- length(y)
-if (any(d)) 
-  w[d] <- (y[n] - y[n - 1])/(x[n] - x[n - 1]) * (xout[d] - 
-                                                   x[n - 1]) + y[n - 1]
-list(x = xout, y = w)
+    # Define function to return constraint value where threshold is passed
+    get_xThreshold <- function(branch) {
+      
+      y <- branch[[val.column]] - d[[val.column]][origin]
+      x <- branch[["constraint"]]
+      
+      # If less than 3 points, return NA
+      if (length(x) < 3)
+        return(NA)
+      
+      # If threshold exceeded, take closest points below and above threshold
+      # and interpolate
+      if (any(y > threshold)) {
+        i.above <- utils::head(which(y > threshold), 1)
+        i.below <- utils::tail(which(y < threshold), 1)
+        if (i.below > i.above) {
+          return(NA)
+        } else {
+          slope <- (y[i.above] - y[i.below])/(x[i.above] - x[i.below])
+          dy <- threshold - y[i.below]
+          dx <- dy/slope
+          x_threshold <- x[i.below] + dx
+          return(x_threshold)
+        }
+      }
+      
+      # If threshold not exceeded,
+      # take the last 20% of points (at least 3) an perform linear fit
+      n_last20 <- max(3, length(which(x - x[1] > 0.8 * (max(x) - x[1]))))
+      x <- tail(x, n_last20)
+      y <- tail(y, n_last20)
+      slope <- sum((x - mean(x))*(y - mean(y)))/sum((x - mean(x))^2)
+      
+      # If slope < 0, return Inf
+      if (slope < 0)
+        return(Inf)
+      
+      # Extrapolate until threshold is passed
+      dy <- threshold - tail(y, 1)
+      dx <- dy/slope
+      x_threshold <- tail(x, 1) + dx
+      
+      # Test if extrapolation takes the point of passage very far
+      # Set to Inf in that case
+      if (x_threshold > 10*(max(x) - min(x)))
+        x_threshold <- Inf
+      
+      return(x_threshold)
+      
+      
+    } 
+    
+    # Right profiles
+    right <- d[d[["constraint"]] >= 0,]
+    upper <- d[[whichPar]][origin] + get_xThreshold(right)
+    
+    # Left profile
+    left <- d[d[["constraint"]] <= 0,]
+    left[["constraint"]] <- - left[["constraint"]]
+    left <- left[order(left[["constraint"]]), ]
+    lower <- d[[whichPar]][origin] - get_xThreshold(left)
+    
+    
+    data.frame(name = whichPar, 
+               value = d[[whichPar]][origin], 
+               lower = lower, 
+               upper = upper)
+    
+    
+  })
+  
+  do.call(rbind, CIs)
+  
 }
 
 
@@ -569,6 +640,8 @@ list(x = xout, y = w)
 #'   \option{samplefun}. See \code{\link{trust}}, parinit.
 #'   \code{center} Can also be a parframe, then the parameter values are taken 
 #'   from the parframe. In this case, the \code{fits} argument is overwritten.
+#'   To use a reproducible set of initial guesses, generate center with 
+#'   \code{\link{msParframe}}
 #' @param studyname The names of the study or fit. This name is used to 
 #'   determine filenames for interim and final results. See Details.
 #' @param rinit Starting trust region radius, see \code{\link{trust}}.
@@ -619,8 +692,11 @@ list(x = xout, y = w)
 #'   
 #' @return A parlist holding errored and converged fits.
 #'   
-#' @seealso \code{\link{trust}}, \code{\link{rnorm}}, \code{\link{runif}}, 
-#'   \code{\link{as.parframe}}
+#' @seealso 1. \code{\link{trust}}, for the used optimizer,
+#'   2. \code{\link{rnorm}}, \code{\link{runif}} for two common sampling functions,
+#'   3. \code{\link{msParframe}} for passing a reproducible set of random initial 
+#'   guesses to mstrust,
+#'   4. \code{\link{as.parframe}} for formatting the output to a handy table
 #'   
 #' @author Wolfgang Mader, \email{Wolfgang.Mader@@fdm.uni-freiburg.de}
 #'  
@@ -632,8 +708,10 @@ mstrust <- function(objfun, center, studyname, rinit = .1, rmax = 10, fits = 20,
 
   narrowing <- NULL
   
+  
   # Check if on Windows
   cores <- sanitizeCores(cores)
+  
   
   # Argument parsing, sorting, and enhancing
   # Gather all function arguments
@@ -648,8 +726,11 @@ mstrust <- function(objfun, center, studyname, rinit = .1, rmax = 10, fits = 20,
   argslist[namesinter] <- argsmatch[namesinter]
   argslist <- c(argslist, varargslist)
   
+  # 
   argslist[["objfun"]] <- force(objfun)
   argslist[["center"]] <- force(center)
+  argslist[["rinit"]] <- force(rinit)
+  argslist[["rmax"]] <- force(rmax)
 
   # Add extra arguments
   argslist$n <- length(center) # How many inital values do we need?
@@ -659,7 +740,7 @@ mstrust <- function(objfun, center, studyname, rinit = .1, rmax = 10, fits = 20,
   # Second, check what trust() and samplefun() accept and check for name clashes.
   # Third, whatever is unused is passed to the objective function objfun().
   nameslocal <- c("studyname", "center", "fits", "cores", "samplefun",
-                  "resultPath", "stats", "narrowing")
+                  "resultPath", "stats", "narrowing", "output")
   namestrust <- intersect(names(formals(trust)), names(argslist))
   namessample <- intersect(names(formals(samplefun)), names(argslist))
   if (length(intersect(namestrust, namessample) != 0)) {
@@ -734,12 +815,58 @@ mstrust <- function(objfun, center, studyname, rinit = .1, rmax = 10, fits = 20,
     fits <- nrow(center)
   }
   
-  m_parlist <- as.parlist(mclapply(1:fits, function(i) {
+  
+  cores <- min(fits, cores)
+  if (cores > 1) {
+    
+    # Start cluster if on windows
+    if (Sys.info()[['sysname']] == "Windows") {
+      
+      cluster <- parallel::makeCluster(cores)
+      doParallel::registerDoParallel(cluster)
+      parallel::clusterCall(cl = cluster, function(x) .libPaths(x), .libPaths())
+      
+      varlist <- ls()
+      # Exclude things like "missing argument"
+      varlist <- c("objfun", "center", "argstrust", 
+                   "samplefun", "argssample", "argsobj", 
+                   "output", "interResultFolder", "logfile")
+      parallel::clusterExport(cluster, envir = environment(), varlist = varlist)
+      
+    } else {
+      
+      doParallel::registerDoParallel(cores = cores)
+      
+    }
+    
+    "%mydo%" <- foreach::"%dopar%"
+    
+  } else {
+    
+    "%mydo%" <- foreach::"%do%"
+    
+  }
+  
+
+  loaded_packages <- .packages()  
+  m_parlist <- as.parlist(foreach::foreach(i = 1:fits, 
+                                           .packages = loaded_packages, 
+                                           .inorder = TRUE,
+                                           .options.multicore = list(preschedule = FALSE)
+                                           ) %mydo% {
+    
+    suppressMessages(loadDLL(objfun))
     
     if(is.parframe(center)) {
       argstrust$parinit <- as.parvec(center, i)
     } else {
-      argstrust$parinit <- center + do.call(samplefun, argssample)
+      if (i == 1) {
+        # First fit always starts from center
+        argstrust$parinit <- center
+      } else {
+        # All other fits start from random positions
+        argstrust$parinit <- center + do.call(samplefun, argssample)  
+      }
     }
     
     fit <- do.call(trust, c(argstrust, argsobj))
@@ -791,10 +918,19 @@ mstrust <- function(objfun, center, studyname, rinit = .1, rmax = 10, fits = 20,
       }
     }
     return(fit)
-  }, mc.preschedule = FALSE, mc.silent = FALSE, mc.cores = cores))
+  })
+  
   close(logfile)
 
+  if (Sys.info()[['sysname']] == "Windows" & cores > 1) {
+    
+    parallel::stopCluster(cluster)
+    doParallel::stopImplicitCluster()
+    
+  }
 
+  
+  
   # Cull failed and completed fits Two kinds of errors occure. The first returns
   # an object of class "try-error". The reason for these failures are unknown to
   # me. The second returns a list of results from trust(), where one name of the
@@ -855,6 +991,46 @@ mstrust <- function(objfun, center, studyname, rinit = .1, rmax = 10, fits = 20,
   return(m_parlist)
 }
 
+#' Reproducibly construct "random" parframes
+#' 
+#' The output of this function can be used for the \code{center} - argument of \code{\link{mstrust}}
+#'
+#' @param pars Named vector. If \code{samplefun} has a "mean"-argument, values of pars will used as mean
+#' @param n Integer how many lines should the parframe have
+#' @param seed Seed for the random number generator
+#' @param samplefun random number generator: \code{\link{rnorm}}, \code{\link{runif}}, etc...
+#' @param ... arguments going to samplefun
+#'
+#' @return parframe (without metanames)
+#' @export
+#' 
+#' @seealso \code{\link{mstrust}} and \code{\link{parframe}}
+#'
+#' @examples
+#' msParframe(c(a = 0, b = 100000), 5)
+#' 
+#' # Parameter specific sigma
+#' msParframe(c(a = 0, b = 100000), 5, samplefun = rnorm, sd = c(100, 0.5))
+msParframe <- function(pars, n = 20, seed = 12345, samplefun = stats::rnorm, ...) {
+  set.seed(seed)
+  
+  if (n == 1)
+    return(parframe(as.data.frame(t(pars))))
+  
+  # generate random pars
+  rnd <- samplefun((n-1)*length(pars), ...)
+  mypars <- matrix(rnd, nrow = (n-1), byrow = T)
+  mean_pars <- 0
+  if ("mean" %in% names(formals(samplefun)))
+    mean_pars <- t(matrix(pars, nrow = length(pars), ncol = (n-1)))
+  mypars <- mypars + mean_pars
+  
+  # assure that pars itself is also part
+  mypars <- rbind(t(pars), mypars)
+  mypars <- `names<-`(as.data.frame(mypars), names(pars))
+  
+  parframe(mypars)
+}
 
 
 #' Construct fitlist from temporary files.
