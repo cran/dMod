@@ -4,7 +4,6 @@
 
 #' Coerce to an equation list
 #' @description Translates a reaction network, e.g. defined by a data.frame, into an equation list object.
-#' @param ... additional arguments to be passed to or from methods.
 #' @details If \code{data} is a \code{data.frame}, it must contain columns "Description" (character), 
 #' "Rate" (character), and one column per ODE state with the state names. 
 #' The state columns correspond to the stoichiometric matrix.

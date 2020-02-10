@@ -1,8 +1,8 @@
 Package: dMod
 Type: Package
 Title: Dynamic Modeling and Parameter Estimation in ODE Models
-Version: 1.0.0
-Date: 2019-04-13
+Version: 1.0.1
+Date: 2020-02-10
 Author: Daniel Kaschek
 Maintainer: Daniel Kaschek <daniel.kaschek@gmail.com>
 Description: The framework provides functions to generate ODEs of reaction
@@ -15,9 +15,9 @@ Depends: cOde (>= 1.0),
 Imports: deSolve, rootSolve, ggplot2, parallel, stringr, plyr, dplyr,
         foreach, doParallel
 Suggests: MASS, rPython, pander, knitr, rmarkdown
-RoxygenNote: 6.1.0
+RoxygenNote: 7.0.2
 VignetteBuilder: knitr
 NeedsCompilation: no
-Packaged: 2019-04-17 06:22:49 UTC; kaschek
+Packaged: 2020-02-10 19:37:08 UTC; kaschek
 Repository: CRAN
-Date/Publication: 2019-04-23 22:10:56 UTC
+Date/Publication: 2020-02-10 20:50:10 UTC

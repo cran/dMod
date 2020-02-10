@@ -9,15 +9,19 @@
 \usage{
 plotCombined(prediction, ...)
 
-\method{plot}{prdlist}(x, data = NULL, ..., scales = "free",
-  facet = "wrap", transform = NULL)
+\method{plot}{prdlist}(x, data = NULL, ..., scales = "free", facet = "wrap", transform = NULL)
 
-\method{plotCombined}{prdlist}(prediction, data = NULL, ...,
-  scales = "free", facet = "wrap", transform = NULL,
-  aesthetics = NULL)
+\method{plotCombined}{prdlist}(
+  prediction,
+  data = NULL,
+  ...,
+  scales = "free",
+  facet = "wrap",
+  transform = NULL,
+  aesthetics = NULL
+)
 
-\method{plot}{prdframe}(x, data = NULL, ..., scales = "free",
-  facet = "wrap", transform = NULL)
+\method{plot}{prdframe}(x, data = NULL, ..., scales = "free", facet = "wrap", transform = NULL)
 }
 \arguments{
 \item{prediction}{Named list of matrices or data.frames, usually the output of a prediction function

@@ -7,8 +7,14 @@
 \usage{
 plotPrediction(prediction, ...)
 
-\method{plotPrediction}{prdlist}(prediction, ..., errfn = NULL,
-  scales = "free", facet = "wrap", transform = NULL)
+\method{plotPrediction}{prdlist}(
+  prediction,
+  ...,
+  errfn = NULL,
+  scales = "free",
+  facet = "wrap",
+  transform = NULL
+)
 }
 \arguments{
 \item{prediction}{Named list of matrices or data.frames, usually the output of a prediction function

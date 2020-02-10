@@ -6,8 +6,7 @@
 \alias{plotData.data.frame}
 \title{Plot a list data points}
 \usage{
-\method{plotData}{datalist}(data, ..., scales = "free", facet = "wrap",
-  transform = NULL)
+\method{plotData}{datalist}(data, ..., scales = "free", facet = "wrap", transform = NULL)
 
 plotData(data, ...)
 

@@ -4,8 +4,14 @@
 \alias{plotPaths}
 \title{Profile likelihood: plot of the parameter paths.}
 \usage{
-plotPaths(profs, ..., whichPar = NULL, sort = FALSE, relative = TRUE,
-  scales = "fixed")
+plotPaths(
+  profs,
+  ...,
+  whichPar = NULL,
+  sort = FALSE,
+  relative = TRUE,
+  scales = "fixed"
+)
 }
 \arguments{
 \item{profs}{profile or list of profiles as being returned by \link{profile}}
