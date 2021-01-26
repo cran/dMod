@@ -1,8 +1,8 @@
 #' Search for symmetries in the loaded model
 #' 
 #' @description This function follows the method published in [1].
-#' @description The function calls a python script via rPython. Usage problems might occur when different python versions are used. The script was written and tested for python 2.7.12, sympy 0.7.6.
-#' @description Recently, users went into problems with RJSONIO when rPython was used. Unless a sound solution is available, please try to reinstall RJSONIO in these cases.
+#' @description The function calls a python script via reticulate. Usage problems might occur when different python versions are used. The script was written and tested for python 2.7.12, sympy 0.7.6.
+#' @description The code is currently ported to Python 3. 
 #' 
 #' @param f object containing the ODE for which \code{as.eqnvec()} is defined
 #' @param obsvect vector of observation functions
@@ -52,16 +52,20 @@ symmetryDetection <- function(f, obsvect = NULL, prediction = NULL,
     initial <- as.character(lapply(1:length(initial), function(i)
       paste(names(initial)[i],'=',initial[i])))
   }
+  reticulate::use_python("/usr/bin/python", required = TRUE)
   
   
-  rPython::python.load(paste(system.file(package = "dMod"),"/code/polyClass.py", sep = ""))
-  rPython::python.load(paste(system.file(package = "dMod"),"/code/functions.py", sep = ""))
-  rPython::python.load(paste(system.file(package = "dMod"),"/code/readData.py", sep = ""))
-  rPython::python.load(paste(system.file(package = "dMod"),"/code/buildSystem.py", sep = ""))
-  rPython::python.load(paste(system.file(package = "dMod"),"/code/checkPredictions.py", sep = ""))
-  rPython::python.load(paste(system.file(package = "dMod"),"/code/symmetryDetection.py", sep = ""))
+  reticulate::source_python(system.file("code/polyClass.py", package = "dMod"))
+  reticulate::source_python(system.file("code/functions.py", package = "dMod"))
+  reticulate::source_python(system.file("code/readData.py", package = "dMod"))
+  reticulate::source_python(system.file("code/buildSystem.py", package = "dMod"))
+  reticulate::source_python(system.file("code/checkPredictions.py", package = "dMod"))
+  reticulate::source_python(system.file("code/symmetryDetection.py", package = "dMod"))
   
-  rPython::python.call("symmetryDetectiondMod", f, obsvect, prediction,
-                       initial, ansatz, pMax, inputs, fixed, cores, allTrafos)
-  
+  symmetryDetectiondMod(
+    f, obsvect,
+    prediction, initial, ansatz, pMax, inputs, fixed, cores,
+    allTrafos
+  )
+
 }

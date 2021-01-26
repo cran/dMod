@@ -133,7 +133,7 @@ as.parframe.parlist <- function(x, sort.by = "value", ...) {
                           )
                         }, fit = x[m_idx], idx = m_idx, SIMPLIFY = FALSE))
   # Sort by value
-  m_parframe <- m_parframe[order(m_parframe[sort.by]),]
+  m_parframe <- m_parframe[order(m_parframe[[sort.by]]),]
   
   parframe(m_parframe, parameters = names(x[[m_idx[1]]]$argument), metanames = m_metanames)
   
